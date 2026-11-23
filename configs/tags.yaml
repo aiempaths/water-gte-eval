@@ -1,0 +1,9 @@
+# Tag unit documentation. The ingest validator reports every processed tag that
+# has NO entry here (unit-less); with require_units: true those become errors.
+#
+# After running the BATADAL/SWaT ingest once, the printed quality report and the
+# manifest list the detected tags — add one entry per detected tag below, e.g.:
+#   T101: {unit: m3/h, min: 0, max: 500}     # unit required; min/max optional range check
+tags: {}
+
+settings: {}

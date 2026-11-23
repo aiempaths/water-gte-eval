@@ -1,0 +1,17 @@
+# Runnable example: ingest the synthetic raw csv files (make-example-raw).
+# Run from the repo root:
+#   python -m water_gte_eval make-example-raw
+#   python -m water_gte_eval ingest configs/ingest/example.yaml
+name: example-raw
+
+source:
+  type: batadal_dir
+  path: examples/raw
+
+tags_yaml: configs/tags_example.yaml
+expected_step: null     # infer the expected step from the data
+flatline_min_run: 6
+require_units: false
+
+output:
+  dir: examples/processed

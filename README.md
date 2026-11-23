@@ -111,21 +111,51 @@ the verdict. `HttpEngine` (`http.py`) maps endpoints and JSON field names entire
 from config (`configs/example_http.yaml`), with retries/timeouts and a clear
 `EngineUnavailableError` when the API is unreachable.
 
+## Ingest (raw -> processed)
+
+```bash
+python -m water_gte_eval make-example-raw                       # synthetic raw csvs (NOT real data)
+python -m water_gte_eval ingest configs/ingest/example.yaml     # prints a data-quality report
+python -m water_gte_eval ingest configs/ingest/batadal.yaml     # real BATADAL once files are placed
+```
+
+- **BATADAL** (`source.type: batadal_dir`, path `data/raw/batadal/`): every
+  `.csv/.dat/.txt/.tsv` file is schema-**detected** — delimiter, header,
+  timestamp column (ISO strings or epoch s/ms/us/ns), numeric tag columns, and
+  attack-label columns (names matching /attack|label/i). No file or column names
+  are assumed; `source.overrides` can override detection. Missing dir -> the run
+  stops and says exactly what to place where. What I found so far: **no files yet**
+  (`data/raw/batadal/` is empty) — place the raw BATADAL (C-Town) files there.
+- **Generic CSV** (`source.type: csv`, for SWaT/WADI once access is granted):
+  configurable `time_column`, `tag_groups`, `label_column`, delimiter (sniffed),
+  `resample`+`resample_agg` to unify sampling rates, and `missing`
+  (interpolate/ffill/bfill/drop) with optional `missing_limit`.
+- **Validator**: units documented per tag in `configs/tags.yaml` (unit-less tags
+  reported, errors when `require_units: true`, optional min/max range checks),
+  monotonic time, duplicate timestamps, gap report vs expected step (inferred if
+  unset), flatline report per tag, missing-value counts. The report is printed
+  and stored in the manifest.
+- Output: tidy parquet (DatetimeIndex, one float column per tag, label columns,
+  `source_file`) into `output.dir` (default `data/processed/`) plus a
+  `manifest.json` with source file sha256s, row counts, date ranges, detected
+  schemas, and quality reports. Deterministic: no wall-clock fields.
+
 ## Layout
 
 ```
-configs/    example_mock.yaml (runs today), example_http.yaml (needs your API), water_gte.yaml (real-data template)
-data/       place real telemetry + events files here
+configs/    experiment configs + ingest configs (batadal, swat_wadi_template, example) + tags.yaml
+data/       raw/ (place BATADAL/SWaT files here), processed/ (generated parquet + manifest.json)
 docs/       engine_contract.md (exact JSON/HTTP/receipt contract)
-examples/   synthetic example-data generator (NOT real plant data)
+examples/   synthetic example-data generators (NOT real plant data)
 src/gte_eval/engine_adapter/   EngineAdapter, MockEngine, HttpEngine, registry (Prompt 2)
 src/water_gte_eval/
-  config.py            config loading, validation, config hash
+  config.py            experiment config loading, validation, config hash
   data/                loader (parquet/csv, schema checks), windows, splits
   engine/              re-exports the gte_eval.engine_adapter interface (single interface)
+  ingest/              detect, batadal, generic_csv, validator, pipeline, ingest config
   metrics/             window-level, event-level, bootstrap CIs
   runner.py            one config -> runs/<config_hash>/
-  cli.py               python -m water_gte_eval ...
-tests/                 pytest suite: contract tests (any adapter), fake FastAPI server,
-                       end-to-end determinism checks
+  cli.py               python -m water_gte_eval {run, ingest, make-example-data, make-example-raw}
+tests/                 pytest suite: engine contract tests (any adapter), fake FastAPI
+                       server, ingest tests (gaps/duplicates/unit-less/flatline), e2e determinism
 ```

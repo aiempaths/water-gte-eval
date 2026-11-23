@@ -7,3 +7,6 @@ examples/data/
 data/*.parquet
 data/*.csv
 *.egg-info/
+examples/raw/
+examples/processed/
+data/processed/

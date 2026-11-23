@@ -1,0 +1,25 @@
+# Ingest the real BATADAL (C-Town) files. PLACE THE RAW FILES FIRST:
+#   data/raw/batadal/   <- the tabular files from the BATADAL distribution
+#                         (.csv/.dat/.txt/.tsv, one per scenario is fine)
+# The loader detects each file's delimiter, header, timestamp column, tag
+# columns, and attack-label columns automatically — no names are hard-coded.
+# Override detection with source.overrides if the report shows a mis-detection.
+name: batadal
+
+source:
+  type: batadal_dir
+  path: data/raw/batadal
+  # files: null            # null = all supported files in the dir; or list specific names
+  # overrides:             # optional detection overrides
+  #   timestamp_column: "..."
+  #   label_columns: ["..."]
+  #   tag_columns: ["..."]
+
+tags_yaml: configs/tags.yaml
+# BATADAL is hourly; set null to infer the expected step from the data instead
+expected_step: 1h
+flatline_min_run: 12
+require_units: false
+
+output:
+  dir: data/processed

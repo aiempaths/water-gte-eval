@@ -1,0 +1,29 @@
+# Template for SWaT/WADI-style CSVs (access-gated — place the file after access
+# is granted). Nothing is assumed: set the real column names below; if a name is
+# wrong the loader stops and lists the columns actually present in the file.
+name: swat-wadi
+
+source:
+  type: csv
+  path: data/raw/swat/data.csv        # PLACEHOLDER: place the SWaT/WADI csv here
+  time_column: "<time column>"        # required
+  # delimiter: ","                    # sniffed automatically if omitted
+  # time_format: null                 # optional strftime format for the time column
+  tag_groups:                         # named groups of tag columns; omit to auto-take all numeric non-label columns
+    flow: ["<flow tag 1>", "<flow tag 2>"]
+    level: ["<level tag>"]
+    # ...
+  # label_column: "<label column>"    # optional attack label column
+  resample: 1s                        # unify mixed sampling rates to a uniform grid; null = keep native
+  resample_agg: mean                  # mean | median | first | last
+  missing: interpolate                # interpolate | ffill | bfill | drop
+  # missing_limit: null               # optional max consecutive fills
+  # label_fill: normal                # fill for label NaNs after resampling
+
+tags_yaml: configs/tags.yaml
+expected_step: 1s
+flatline_min_run: 100
+require_units: false
+
+output:
+  dir: data/processed

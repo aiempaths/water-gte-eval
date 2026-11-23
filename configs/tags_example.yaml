@@ -1,0 +1,9 @@
+# Units for the synthetic example raw tags (examples/raw) — demo only.
+tags:
+  tank_level: {unit: m, min: 0, max: 12}
+  flow: {unit: m3/h, min: 0, max: 500}
+  pressure: {unit: bar, min: 0, max: 10}
+  pump_state: {unit: dimensionless}
+  level: {unit: m, min: 0, max: 12}
+
+settings: {}

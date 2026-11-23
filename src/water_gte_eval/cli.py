@@ -12,7 +12,8 @@ import json
 import sys
 from pathlib import Path
 
-from .devdata import generate_example_data
+from .devdata import generate_example_data, generate_example_raw
+from .ingest import run_ingest
 from .runner import run_experiment
 
 
@@ -51,6 +52,16 @@ def main(argv: list[str] | None = None) -> int:
         help="generate the synthetic example dataset (NOT real plant data)",
     )
     m.add_argument("--out", default="examples/data", help="output directory (default: examples/data)")
+    m2 = sub.add_parser(
+        "make-example-raw",
+        help="generate synthetic RAW csv files for trying the ingest pipeline (NOT real plant data)",
+    )
+    m2.add_argument("--out", default="examples/raw", help="output directory (default: examples/raw)")
+    ing = sub.add_parser(
+        "ingest",
+        help="run an ingest config: raw files -> data/processed parquet + manifest.json + quality report",
+    )
+    ing.add_argument("config", help="path to an ingest YAML config (configs/ingest/*.yaml)")
     args = parser.parse_args(argv)
 
     if args.command == "run":
@@ -62,6 +73,15 @@ def main(argv: list[str] | None = None) -> int:
         print("synthetic example data written (NOT real plant measurements):")
         for k, v in paths.items():
             print(f"  {k}: {v}")
+        return 0
+    if args.command == "make-example-raw":
+        paths = generate_example_raw(args.out)
+        print("synthetic raw files written (NOT real plant data):")
+        for k, v in paths.items():
+            print(f"  {k}: {v}")
+        return 0
+    if args.command == "ingest":
+        run_ingest(args.config)
         return 0
     return 2
 

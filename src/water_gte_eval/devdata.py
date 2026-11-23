@@ -67,3 +67,46 @@ def generate_example_data(out_dir: str | Path, seed: int = 42) -> dict[str, Path
     telemetry.to_parquet(tpath, index=False)
     events.to_parquet(epath, index=False)
     return {"telemetry": tpath, "events": epath}
+
+
+def generate_example_raw(out_dir: str | Path, seed: int = 42) -> dict[str, Path]:
+    """Write two synthetic RAW csv files (generic names on purpose, to exercise
+    schema detection) into ``out_dir``. NOT real plant data. Deterministic."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(seed)
+
+    # scenario A: comma csv, hourly, with a 3h gap, a duplicate row, and a flatline
+    ts = pd.date_range("2024-05-01T00:00:00", "2024-05-10T23:00:00", freq="1h")
+    ts = ts.delete([100, 101, 102])  # 3h gap
+    n = len(ts)
+    level = 7.0 + rng.normal(0, 0.05, n)
+    flow = 100 + rng.normal(0, 2.0, n)
+    pressure = 3.0 + rng.normal(0, 0.05, n)
+    pump = np.zeros(n)  # flatline
+    attack = np.zeros(n)
+    a = pd.DataFrame({
+        "time": ts.strftime("%Y-%m-%d %H:%M:%S"),
+        "tank_level": level, "flow": flow, "pressure": pressure,
+        "pump_state": pump, "attack": attack,
+    })
+    a = pd.concat([a, a.iloc[[5]]], ignore_index=True)  # duplicate timestamp row
+    p1 = out / "scenario_A.csv"
+    a.to_csv(p1, index=False)
+
+    # scenario B: semicolon csv, 30-min, with missing values and an attack window
+    ts2 = pd.date_range("2024-06-01T00:00:00", "2024-06-05T23:30:00", freq="30min")
+    n2 = len(ts2)
+    level2 = 7.0 + rng.normal(0, 0.05, n2)
+    flow2 = 100 + rng.normal(0, 2.0, n2)
+    flow2[50:53] = np.nan  # missing values
+    attack2 = np.zeros(n2)
+    attack2[60:72] = 1  # attack window
+    b = pd.DataFrame({
+        "timestamp": ts2.strftime("%Y-%m-%dT%H:%M:%S"),
+        "level": level2, "flow": flow2, "attack_label": attack2,
+    })
+    p2 = out / "scenario_B.dat"
+    b.to_csv(p2, index=False, sep=";")
+
+    return {"scenario_A": p1, "scenario_B": p2}
