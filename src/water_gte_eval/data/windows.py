@@ -29,6 +29,7 @@ class Window:
     scenario: str
     event_key: str | None = None
     meta: dict = field(default_factory=dict)
+    timestamps: tuple = ()  # per-sample pd.Timestamp values in the window
 
     def feature_vector(self) -> np.ndarray:
         """Per-sensor [mean, std] summary used by the MockEngine."""
@@ -81,7 +82,8 @@ def build_windows(
     if step <= pd.Timedelta(0) or size <= pd.Timedelta(0):
         raise ValueError("window size and step must be positive durations")
     df = df.sort_values(tcols.timestamp).reset_index(drop=True)
-    ts_ns = pd.to_datetime(df[tcols.timestamp]).to_numpy(dtype="datetime64[ns]").view("int64")
+    ts = pd.to_datetime(df[tcols.timestamp])
+    ts_ns = ts.to_numpy(dtype="datetime64[ns]").view("int64")
     sensors = list(tcols.sensors)
 
     ev = events.copy()
@@ -99,6 +101,7 @@ def build_windows(
         mask = (ts_ns >= s.value) & (ts_ns < e.value)
         if mask.any():
             matrix = df.loc[mask, sensors].to_numpy(dtype=np.float64)
+            sample_ts = tuple(ts.loc[mask].tolist())
             label, scenario, ekey = _label_window(
                 s, e, ev_start_ns, ev_end_ns, ev_scenario, ev_label, default_label
             )
@@ -112,6 +115,7 @@ def build_windows(
                     label=label,
                     scenario=scenario,
                     event_key=ekey,
+                    timestamps=sample_ts,
                 )
             )
         i += 1

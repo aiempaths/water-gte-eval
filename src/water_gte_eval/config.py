@@ -8,11 +8,12 @@ config overwrites the same run directory with identical outputs.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+
+from gte_eval.engine_adapter.base import canonical_json
 
 
 class ConfigError(Exception):
@@ -145,11 +146,6 @@ def load_config(path: str | Path) -> Config:
     except yaml.YAMLError as exc:
         raise ConfigError(f"Config file {p} is not valid YAML: {exc}") from exc
     return Config(raw=validate(raw), path=p)
-
-
-def canonical_json(obj: object) -> str:
-    """Deterministic JSON encoding used for hashing and receipts."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def config_hash(raw: dict) -> str:

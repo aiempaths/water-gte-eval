@@ -6,8 +6,9 @@ EngineAdapter (history strictly before each scored window) -> decide
 trust/route-to-human -> per-window and event-level metrics -> bootstrap CIs
 over events/scenarios -> write runs/<config_hash>/.
 
-Outputs contain no wall-clock timestamps, so re-running the same config
-reproduces byte-identical files.
+The engine is accessed ONLY via gte_eval.engine_adapter.EngineAdapter.
+Outputs contain no wall-clock timestamps and no latency values, so re-running
+the same config reproduces byte-identical files.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from .config import Config, config_hash, load_config
 from .data import (
     EventColumns,
     TelemetryColumns,
+    Window,
     build_windows,
     eligible_history,
     file_sha256,
@@ -29,8 +31,7 @@ from .data import (
     require_columns,
     temporal_split,
 )
-from .engine import EngineError, make_engine
-from .engine.base import ScoreResult
+from .engine import AdapterWindow, EngineError, EngineResult, HistoryWindow, make_engine
 from .metrics import bootstrap_event_metrics, build_event_records, event_metrics, per_scenario, window_metrics
 
 
@@ -41,11 +42,31 @@ def _resolve(p: str | Path) -> Path:
     return p if p.is_absolute() else Path.cwd() / p
 
 
-def _decide(result: ScoreResult, decision_cfg: dict) -> bool:
-    """Downstream decision logic: close+agreeing = trust; far or mixed =
-    route to human (flag)."""
+def _to_adapter_window(w: Window) -> AdapterWindow:
+    sensors = {
+        tag: [float(v) for v in col] for tag, col in zip(w.sensors, w.matrix.T)
+    }
+    timestamps = [pd.Timestamp(t).isoformat() for t in w.timestamps]
+    if not timestamps:
+        timestamps = [w.start.isoformat(), w.end.isoformat()]
+    return AdapterWindow(window_id=w.window_id, timestamps=timestamps, sensors=sensors)
+
+
+def _to_history_window(w: Window) -> HistoryWindow:
+    aw = _to_adapter_window(w)
+    return HistoryWindow(
+        window_id=aw.window_id,
+        timestamps=list(aw.timestamps),
+        sensors={k: list(v) for k, v in aw.sensors.items()},
+        outcome_label=w.label,
+    )
+
+
+def _decide(result: EngineResult, decision_cfg: dict) -> bool:
+    """Downstream decision logic: close+agreeing = trust; far, mixed, or
+    unavailable = route to human (flag)."""
     if decision_cfg["mode"] == "verdict":
-        return result.verdict == decision_cfg.get("route_verdict", "route_to_human")
+        return result.verdict == decision_cfg.get("route_verdict", "route_to_human") or result.verdict == "unavailable"
     if result.closeness is None or result.agreement is None:
         return True
     return bool(
@@ -97,6 +118,7 @@ def run_experiment(config_path: str | Path) -> Path:
     )
 
     engine = make_engine(raw["engine"])
+    engine.reset_history()
     decision_cfg = raw["decision"]
     em_cfg = raw["event_metrics"]
     min_detected = int(em_cfg.get("min_detected_windows", 1))
@@ -105,13 +127,11 @@ def run_experiment(config_path: str | Path) -> Path:
     added: set[str] = set()
     rows: list[dict] = []
     for w in split.eval:
-        for hw in eligible_history(pool, w):
-            if hw.window_id not in added:
-                engine.add_to_history(hw, hw.label)
-                added.add(hw.window_id)
-        result = engine.score(w)
-        if not engine.verify_receipt(w, result):
-            raise EngineError(f"receipt verification failed for window {w.window_id}")
+        new = [hw for hw in eligible_history(pool, w) if hw.window_id not in added]
+        if new:
+            engine.add_history([_to_history_window(hw) for hw in new])
+            added.update(hw.window_id for hw in new)
+        result = engine.score(_to_adapter_window(w))
         flag = _decide(result, decision_cfg)
         rows.append(
             {
@@ -125,9 +145,13 @@ def run_experiment(config_path: str | Path) -> Path:
                 "closeness": result.closeness,
                 "agreement": result.agreement,
                 "verdict": result.verdict,
+                "neighbor_ids": list(result.neighbor_ids),
                 "receipt": result.receipt,
             }
         )
+    receipts_verified = engine.verify_chain()
+    if not receipts_verified:
+        raise EngineError("receipt chain verification failed; engine outputs were tampered or inconsistent")
     preds = pd.DataFrame(rows)
 
     flags = {r["window_id"]: r["flag"] for r in rows}
@@ -174,16 +198,15 @@ def run_experiment(config_path: str | Path) -> Path:
     events_df.to_csv(out_dir / "events.csv", index=False)
     (out_dir / "metrics.json").write_text(_dump(metrics), encoding="utf-8")
 
+    engine_info = {"type": raw["engine"]["type"], **engine.health()}
+    engine_info["receipts_verified"] = bool(receipts_verified)
+    engine_info["chain_head"] = engine.chain_head
     manifest = {
         "config_hash": run_hash,
         "config_name": cfg.name,
         "config_file": str(cfg.path),
         "seed": cfg.seed,
-        "engine": {
-            **engine.describe(),
-            "receipt_chain_head": engine.receipt_chain_head,
-            "receipts_verified": True,
-        },
+        "engine": engine_info,
         "dataset": {
             "path": str(dpath),
             "sha256": file_sha256(dpath),

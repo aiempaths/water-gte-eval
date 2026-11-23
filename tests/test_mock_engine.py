@@ -1,90 +1,76 @@
-import numpy as np
-import pandas as pd
+"""MockEngine unit tests + registry checks."""
+
+import dataclasses
+
 import pytest
 
-from water_gte_eval.engine import EngineError, MockEngine, make_engine
-from water_gte_eval.engine.base import ScoreResult
-from water_gte_eval.data.windows import Window
+from gte_eval.engine_adapter import EngineError, make_engine
+from gte_eval.engine_adapter.mock import MockEngine, fingerprint_window, sensor_fingerprint
+from test_engine_contract import HISTORY, make_history, make_window
 
 
-def make_window(i: int, base: float, start: str = "2024-01-01T00:00") -> Window:
-    m = np.full((3, 2), base, dtype=np.float64)
-    return Window(
-        window_id=f"w{i:05d}",
-        start=pd.Timestamp(start),
-        end=pd.Timestamp(start) + pd.Timedelta("1h"),
-        matrix=m,
-        sensors=("a", "b"),
-        label="normal",
-        scenario="s",
-    )
+def test_fingerprint_stats():
+    fp = sensor_fingerprint([1.0, 2.0, 3.0, 4.0])
+    mean, std, slope, kurt, lag1 = fp
+    assert mean == 2.5 and std == pytest.approx(1.118033988749895)
+    assert slope == pytest.approx(1.0)
+    assert kurt == pytest.approx(-1.36)  # excess kurtosis of a linear ramp
+    assert -1.0 <= lag1 <= 1.0
+    assert sensor_fingerprint([]) == [0.0] * 5
+    assert sensor_fingerprint([5.0]) == [5.0, 0.0, 0.0, 0.0, 0.0]
+    w = make_window(0, 1.0)
+    assert fingerprint_window(w).shape == (10,)  # 2 sensors x 5 stats
 
 
-def test_empty_history_routes_to_human():
+def test_empty_history_is_unavailable():
     eng = MockEngine(k=3)
-    res = eng.score(make_window(0, 1.0))
-    assert res.closeness is None and res.agreement is None
-    assert res.verdict == "route_to_human"
-    assert res.receipt and eng.verify_receipt(make_window(0, 1.0), res)
+    r = eng.score(make_window(0, 1.0))
+    assert r.verdict == "unavailable"
+    assert r.closeness == float("inf") and r.agreement == 0.0 and r.neighbor_ids == []
+    assert eng.verify_receipt(r) and eng.verify_chain()
 
 
-def test_identical_history_is_trusted():
+def test_identical_history_trusted_far_routed():
     eng = MockEngine(k=3, closeness_max=2.0, agreement_min=0.6)
-    for i in range(5):
-        w = make_window(i, 1.0)
-        eng.add_to_history(w, "normal")
-    res = eng.score(make_window(99, 1.0))
-    assert res.closeness is not None and res.closeness < 1e-9
-    assert res.agreement == 1.0
-    assert res.verdict == "trust"
+    eng.reset_history()
+    eng.add_history([make_history(i, 1.0, "normal") for i in range(5)])
+    r = eng.score(make_window(99, 1.0))
+    assert r.verdict == "trust" and r.agreement == 1.0 and len(r.neighbor_ids) == 3
+    assert r.closeness < 1e-9
+    r_far = eng.score(make_window(98, 100.0))
+    assert r_far.verdict == "route_to_human" and r_far.closeness > 2.0
 
 
-def test_far_window_routes_to_human():
-    eng = MockEngine(k=3, closeness_max=0.5, agreement_min=0.9)
-    for i in range(5):
-        eng.add_to_history(make_window(i, 1.0), "normal")
-    res = eng.score(make_window(99, 100.0))
-    assert res.verdict == "route_to_human"
-    assert res.closeness > 0.5
+def test_k_larger_than_history_and_mixed_labels():
+    eng = MockEngine(k=10)
+    eng.add_history([make_history(0, 1.0, "normal"), make_history(1, 2.0, "anomaly")])
+    r = eng.score(make_window(2, 1.5))
+    assert r.agreement == 0.5 and len(r.neighbor_ids) == 2
 
 
-def test_deterministic_across_instances():
+def test_determinism_across_instances():
     def run():
         eng = MockEngine(k=3)
-        out = []
-        for i in range(6):
-            w = make_window(i, float(i))
-            if i > 0:
-                eng.add_to_history(make_window(i - 1, float(i - 1)), "normal" if i % 2 else "anomaly")
-            out.append(eng.score(w))
-        return out
-    assert run() == run()
+        eng.add_history(HISTORY)
+        return eng.score(make_window(7, 1.2))
+    r1, r2 = run(), run()
+    assert r1.receipt == r2.receipt
+    assert dataclasses.replace(r1, latency_ms=0.0) == dataclasses.replace(r2, latency_ms=0.0)
 
 
-def test_receipt_detects_tampering():
-    eng = MockEngine(k=2)
-    eng.add_to_history(make_window(0, 1.0), "normal")
-    w = make_window(1, 2.0)
-    res = eng.score(w)
-    assert eng.verify_receipt(w, res)
-    tampered = ScoreResult(closeness=(res.closeness or 0) + 1.0, agreement=res.agreement,
-                           verdict=res.verdict, receipt=res.receipt)
-    assert not eng.verify_receipt(w, tampered)
-    wrong_window = eng.verify_receipt(make_window(2, 2.0), res)
-    assert not wrong_window
-
-
-def test_k_larger_than_history_uses_all():
-    eng = MockEngine(k=10)
-    eng.add_to_history(make_window(0, 1.0), "normal")
-    eng.add_to_history(make_window(1, 2.0), "anomaly")
-    res = eng.score(make_window(2, 1.5))
-    assert res.agreement == 0.5
+def test_add_history_type_check():
+    eng = MockEngine()
+    with pytest.raises(EngineError, match="HistoryWindow"):
+        eng.add_history([make_window(0, 1.0)])
+    with pytest.raises(EngineError, match="score\\(\\) expects"):
+        eng.score("not a window")
 
 
 def test_registry():
     eng = make_engine({"type": "mock", "params": {"k": 3}})
     assert isinstance(eng, MockEngine) and eng.k == 3
+    eng2 = make_engine({"type": "http", "params": {"base_url": "http://127.0.0.1:9"}})
+    assert eng2.base_url == "http://127.0.0.1:9"
     with pytest.raises(EngineError, match="Unknown mock engine param"):
         make_engine({"type": "mock", "params": {"bogus": 1}})
     with pytest.raises(EngineError, match="Unknown engine type"):

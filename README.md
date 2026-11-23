@@ -3,15 +3,19 @@
 Reproducible evaluation harness for a **Geometric Trust Engine (GTE)** — a black-box,
 deterministic, training-free engine — on water-treatment/distribution telemetry.
 
-The engine is accessed **only** through the `EngineAdapter` interface
-(`src/water_gte_eval/engine/base.py`). The harness runs fully with the bundled
-`MockEngine`; plug in the real engine by implementing `EngineAdapter` and
-registering it in `engine/registry.py`.
+The engine is accessed **only** through the `EngineAdapter` interface in
+`src/gte_eval/engine_adapter/` (see [docs/engine_contract.md](docs/engine_contract.md)
+for the exact JSON/HTTP contract). Two adapters ship: `MockEngine` (in-process,
+deterministic) and `HttpEngine` (config-driven REST client). Contract tests in
+`tests/test_engine_contract.py` run against ANY adapter; `tests/fake_engine_server.py`
+is a FastAPI fake of the API for testing `HttpEngine`. Plug in the real engine by
+implementing `EngineAdapter` and registering it in
+`gte_eval/engine_adapter/registry.py`.
 
 ## Quickstart
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e .
+python3 -m venv .venv && .venv/bin/pip install -e ".[test]"   # [test] adds fastapi+uvicorn for the fake server
 .venv/bin/python -m water_gte_eval make-example-data        # synthetic example data (NOT real plant data)
 .venv/bin/python -m water_gte_eval run configs/example_mock.yaml
 .venv/bin/python -m pytest                                  # test suite
@@ -87,32 +91,41 @@ by their matched event; background windows count only in window-level metrics.
 
 ```python
 class EngineAdapter(ABC):
-    def reset(self) -> None: ...
-    def add_to_history(self, window: Window, label: str) -> None: ...
-    def score(self, window: Window) -> ScoreResult: ...      # closeness, agreement, verdict, receipt
-    def verify_receipt(self, window: Window, result: ScoreResult) -> bool: ...
-    @property
-    def receipt_chain_head(self) -> str: ...
+    def reset_history(self) -> None: ...
+    def add_history(self, windows: list[HistoryWindow]) -> None: ...
+    def score(self, window: Window) -> EngineResult: ...   # closeness, agreement, verdict, neighbor_ids, receipt, latency_ms, raw
+    def health(self) -> dict: ...
 ```
 
-`MockEngine` (`engine/mock.py`) is a deterministic reference implementation:
-k-NN over per-sensor [mean, std] features standardized by history statistics;
-closeness = mean distance to k nearest; agreement = majority-label fraction;
-receipts are a sha256 hash chain. The runner verifies every receipt and aborts
-on tampering.
+`Window` = `{window_id, timestamps, sensors: {tag: [float,...]}}`;
+`HistoryWindow` adds `outcome_label`. Verdicts: `trust` | `route_to_human` |
+`unavailable`. Receipts are a sha256 chain over (prev_receipt, window_id, inputs,
+outputs) — latency_ms/raw excluded so same inputs give byte-identical receipts.
+The base class provides `verify_receipt`/`verify_chain`; the runner verifies the
+whole chain and aborts on tampering. Full contract: [docs/engine_contract.md](docs/engine_contract.md).
+
+`MockEngine` (`src/gte_eval/engine_adapter/mock.py`) fingerprints each sensor as
+[mean, std, slope, excess kurtosis, lag-1 autocorrelation], z-scores by history
+stats, kNN for closeness, majority-label fraction for agreement, thresholds for
+the verdict. `HttpEngine` (`http.py`) maps endpoints and JSON field names entirely
+from config (`configs/example_http.yaml`), with retries/timeouts and a clear
+`EngineUnavailableError` when the API is unreachable.
 
 ## Layout
 
 ```
-configs/    example_mock.yaml (runs today), water_gte.yaml (real-data template)
+configs/    example_mock.yaml (runs today), example_http.yaml (needs your API), water_gte.yaml (real-data template)
 data/       place real telemetry + events files here
+docs/       engine_contract.md (exact JSON/HTTP/receipt contract)
 examples/   synthetic example-data generator (NOT real plant data)
+src/gte_eval/engine_adapter/   EngineAdapter, MockEngine, HttpEngine, registry (Prompt 2)
 src/water_gte_eval/
   config.py            config loading, validation, config hash
   data/                loader (parquet/csv, schema checks), windows, splits
-  engine/              EngineAdapter, MockEngine, registry
+  engine/              re-exports the gte_eval.engine_adapter interface (single interface)
   metrics/             window-level, event-level, bootstrap CIs
   runner.py            one config -> runs/<config_hash>/
   cli.py               python -m water_gte_eval ...
-tests/                 pytest suite (includes end-to-end determinism checks)
+tests/                 pytest suite: contract tests (any adapter), fake FastAPI server,
+                       end-to-end determinism checks
 ```

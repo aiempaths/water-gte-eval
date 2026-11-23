@@ -41,7 +41,8 @@ def test_run_contents_and_manifest(config_path, example_data, tmp_path):
     manifest = json.loads((out / "manifest.json").read_text())
     assert manifest["engine"]["receipts_verified"] is True
     assert manifest["engine"]["type"] == "mock"
-    assert manifest["engine"]["receipt_chain_head"]
+    assert manifest["engine"]["chain_head"] and len(manifest["engine"]["chain_head"]) == 64
+    assert manifest["engine"]["status"] == "ok"
     assert manifest["dataset"]["sha256"] == file_sha256(example_data["telemetry"])
     assert manifest["events"]["sha256"] == file_sha256(example_data["events"])
     assert manifest["split"]["n_eval_windows"] > 0 and manifest["split"]["n_history_windows"] > 0
@@ -63,6 +64,8 @@ def test_run_contents_and_manifest(config_path, example_data, tmp_path):
     assert "drift_holdout" not in set(preds["scenario"])
     assert set(preds["flag"].unique()) <= {True, False}
     assert preds["receipt"].str.len().eq(64).all()
+    assert preds["verdict"].isin(["trust", "route_to_human", "unavailable"]).all()
+    assert preds["neighbor_ids"].map(len).max() <= 5  # mock k=5
     # every scored window starts at/after eval_start
     assert (preds["start"] >= pd.Timestamp("2024-06-01T00:00:00")).all()
 

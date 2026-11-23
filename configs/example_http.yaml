@@ -1,0 +1,77 @@
+# Example config for an HTTP engine API. Requires a running API that follows
+# docs/engine_contract.md (tests/fake_engine_server.py is a working reference).
+# All endpoint paths and JSON field names below are PLACEHOLDER defaults —
+# change them in params to match your API.
+name: example-http
+seed: 42
+
+dataset:
+  path: examples/data/telemetry.parquet
+  columns:
+    timestamp: timestamp
+    sensors: [flow, pressure, level, chlorine]
+
+events:
+  path: examples/data/events.parquet
+  columns:
+    scenario: scenario
+    start: start
+    end: end
+    label: label
+
+window:
+  size: 1h
+  step: 15min
+
+split:
+  history_end: "2024-06-01T00:00:00"
+  eval_start: "2024-06-01T00:00:00"
+  eval_end: "2024-07-01T00:00:00"
+  holdout_scenarios: [drift_holdout]
+
+labels:
+  positive: anomaly
+  default: normal
+
+engine:
+  type: http
+  params:
+    base_url: "http://127.0.0.1:8765"        # PLACEHOLDER: your engine API
+    endpoints:                               # PLACEHOLDER defaults
+      reset: "/history/reset"
+      append: "/history/append"
+      score: "/score"
+      health: "/health"
+    field_map:                               # EngineResult field -> your API's response field (PLACEHOLDER defaults)
+      window_id: window_id
+      closeness: closeness
+      agreement: agreement
+      verdict: verdict
+      neighbor_ids: neighbor_ids
+      receipt: receipt
+    request_field_map:                       # outgoing window JSON keys (PLACEHOLDER defaults)
+      window_id: window_id
+      timestamps: timestamps
+      sensors: sensors
+      outcome_label: outcome_label
+    history_wrapper: "windows"               # top-level key of the append payload
+    score_wrapper: "window"                  # top-level key of the score payload
+    timeout_s: 5.0
+    retries: 3
+    backoff_s: 0.2
+
+decision:
+  mode: verdict
+  route_verdict: route_to_human
+
+event_metrics:
+  min_detected_windows: 1
+
+bootstrap:
+  unit: events
+  n_resamples: 1000
+  ci: 0.95
+  seed: 42
+
+output:
+  runs_dir: runs
