@@ -1,0 +1,18 @@
+# WNTR hydraulic simulation on the bundled EPANET Net3 network
+# (wntr package: library/networks/Net3.inp). Hydraulics only — WNTR/EPANET do
+# NOT model coagulation/filtration; the chlorine column is a simple first-order
+# decay trace, not a water-quality model. See sim/toy_plant.py for the toy
+# in-plant model.
+#   python -m water_gte_eval sim-wntr configs/sim/wntr_example.yaml
+name: wntr-net3-demo
+network: wntr:Net3          # bundled Net3, or a path to your own .inp
+scenarios: 4
+seed_base: 1                # seeds = seed_base .. seed_base+scenarios-1
+# seeds: [11, 22, 33]       # or explicit
+duration_h: 24
+report_s: 900               # 15-min reporting
+base_demand_scale: 1.0
+chlorine: {c0: 1.0, k_per_h: 0.05}
+
+output:
+  dir: examples/sim_wntr

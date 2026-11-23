@@ -188,15 +188,48 @@ window-level + event-level metrics, bootstrap CIs over events) and
 `baseline_scores(_wide).parquet`. All seeded and deterministic; a perf smoke
 runs all six on 2400 windows in seconds.
 
+## Simulation, injection, severity sweeps
+
+```bash
+python -m water_gte_eval sim-wntr configs/sim/wntr_example.yaml   # WNTR on bundled EPANET Net3
+python -m water_gte_eval sim-toy configs/sim/toy_example.yaml     # clearly-labeled TOY plant model
+python -m water_gte_eval inject-demo configs/inject/example.yaml  # plots + severity curve -> reports/
+```
+
+- **`src/gte_eval/sim/wntr_sim.py`**: hydraulic telemetry from WNTR running the
+  **bundled EPANET Net3** (`<wntr pkg>/library/networks/Net3.inp`, path recorded
+  in the manifest with its sha256), one random 24-step demand pattern per seed,
+  reporting tank levels, junction pressures, pump flows/status, pipe flows,
+  total demand, plus a **simple first-order chlorine decay trace**
+  (`C0*exp(-k*t)`) — not a water-quality model. WNTR/EPANET model distribution
+  hydraulics only; they do **not** model in-plant coagulation or filtration.
+- **`src/gte_eval/sim/toy_plant.py`**: clearly labeled TOY in-plant model (tank
+  balance, chlorine-contact CSTR, filter headloss growth with noise + backwash,
+  pump hysteresis) for the processes WNTR doesn't cover. Not calibrated.
+- **`src/gte_eval/inject/`**: fault injection into clean telemetry with a
+  severity parameter and recorded ground truth (event_id/start/end/label/
+  fault/severity/tags): stuck_sensor, additive_drift, constant_bias, spikes,
+  rising_noise, replay, delayed_dropped, actuator_fault (pump vs flow
+  inconsistency), and legitimate disturbances demand_surge / tank_refill
+  labeled **process_change, not fault**. `severity_sweep` applies one fault at
+  many severities. Feeding the intervals to `label_windows` makes injected
+  labels match the injected intervals exactly (tested).
+- **`inject-demo`**: plots a few injected examples (clean vs injected, interval
+  shaded) to `reports/injected_*.png`, and runs a severity sweep through a
+  detector baseline fit on clean windows -> `reports/severity_curve.png/.json`
+  (event recall vs severity) + `injected_intervals.parquet` + `inject_demo.json`.
+
 ## Layout
 
 ```
-configs/    experiment + ingest + prepare + baselines configs, tags.yaml
+configs/    experiment + ingest + prepare + baselines + sim + inject configs, tags.yaml
 data/       raw/ (place BATADAL/SWaT files here), processed/ (generated parquet + manifest.json)
 docs/       engine_contract.md (exact JSON/HTTP/receipt contract)
 examples/   synthetic example-data generators (NOT real plant data)
 src/gte_eval/engine_adapter/   EngineAdapter, MockEngine, HttpEngine, registry (Prompt 2)
 src/gte_eval/baselines/        common Baseline interface + 6 baselines + registry
+src/gte_eval/inject/           fault injection + scenarios + severity sweeps
+src/gte_eval/sim/              wntr_sim (bundled Net3) + toy_plant (labeled toy)
 src/water_gte_eval/
   config.py            experiment config loading, validation, config hash
   data/                loader (parquet/csv, schema checks), windows, splits
@@ -204,10 +237,13 @@ src/water_gte_eval/
   ingest/              detect, batadal, generic_csv, validator, pipeline, ingest config
   prepare.py           processed parquet -> windows + labels + staged split + leakage check
   baseline_eval.py     windows parquet -> baselines -> runs/<config_hash>/ shared metrics
+  inject_eval.py       inject-demo: example plots + severity curve -> reports/
   data/                loader, windows/windowing, labeling, splits + leakage checker
   metrics/             window-level, event-level, bootstrap CIs
   runner.py            one config -> runs/<config_hash>/
-  cli.py               python -m water_gte_eval {run, ingest, prepare, baselines, make-example-*}
+  cli.py               python -m water_gte_eval {run, ingest, prepare, baselines,
+                       sim-wntr, sim-toy, inject-demo, make-example-*}
+reports/               inject-demo plots/curves (generated)
 tests/                 pytest suite: engine contract tests (any adapter), fake FastAPI
                        server, ingest tests (gaps/duplicates/unit-less/flatline), e2e determinism
 ```

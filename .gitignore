@@ -12,3 +12,8 @@ examples/processed/
 data/processed/
 examples/processed_demo/
 examples/prepare_out/
+reports/*.png
+reports/*.json
+reports/*.parquet
+examples/sim_wntr/
+examples/sim_toy/

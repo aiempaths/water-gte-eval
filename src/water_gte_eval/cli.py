@@ -12,9 +12,12 @@ import json
 import sys
 from pathlib import Path
 
+import yaml
+
 from .baseline_eval import run_baseline_eval
 from .devdata import generate_example_data, generate_example_processed, generate_example_raw
 from .ingest import run_ingest
+from .inject_eval import run_inject_demo
 from .prepare import run_prepare
 from .runner import run_experiment
 
@@ -74,6 +77,13 @@ def main(argv: list[str] | None = None) -> int:
         help="run baseline evaluation on prepared windows: runs/<config_hash>/",
     )
     bl.add_argument("config", help="path to a baselines YAML config (configs/baselines/*.yaml)")
+    sw = sub.add_parser("sim-wntr", help="simulate clean hydraulic telemetry with WNTR (bundled Net3)")
+    sw.add_argument("config", help="path to a sim YAML config (configs/sim/wntr_example.yaml)")
+    st = sub.add_parser("sim-toy", help="simulate clean telemetry with the clearly-labeled TOY plant model")
+    st.add_argument("config", help="path to a sim YAML config (configs/sim/toy_example.yaml)")
+    ij = sub.add_parser("inject-demo",
+                        help="inject faults into clean telemetry: example plots + severity sweep curve -> reports/")
+    ij.add_argument("config", help="path to an inject YAML config (configs/inject/example.yaml)")
     m3 = sub.add_parser(
         "make-example-processed",
         help="generate a synthetic processed-style parquet for trying `prepare` (NOT real plant data)",
@@ -111,6 +121,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "baselines":
         run_baseline_eval(args.config)
+        return 0
+    if args.command == "sim-wntr":
+        from gte_eval.sim import run_wntr_sim
+        run_wntr_sim(yaml.safe_load(open(args.config)))
+        return 0
+    if args.command == "sim-toy":
+        from gte_eval.sim import run_toy_sim
+        run_toy_sim(yaml.safe_load(open(args.config)))
+        return 0
+    if args.command == "inject-demo":
+        run_inject_demo(args.config)
         return 0
     return 2
 

@@ -1,0 +1,49 @@
+# Inject demo on clean simulated telemetry.
+#   python -m water_gte_eval sim-toy configs/sim/toy_example.yaml
+#   python -m water_gte_eval inject-demo configs/inject/example.yaml
+name: inject-demo
+seed: 42
+
+clean_path: examples/sim_toy/toy_scenario_00_seed42.parquet
+
+window: {length: 24, stride: 6}
+
+labeling:
+  min_overlap_frac: 0.5
+  lag: 1h
+
+# a few example injections, plotted to reports/injected_<fault>_<event_id>.png
+injections:
+  - {fault: stuck_sensor, start: "2024-01-01T06:00:00", end: "2024-01-01T12:00:00",
+     severity: 1.0, tags: [demand_flow], label: fault}
+  - {fault: additive_drift, start: "2024-01-01T14:00:00", end: "2024-01-02T02:00:00",
+     severity: 1.0, tags: [tank_level], label: fault}
+  - {fault: spikes, start: "2024-01-02T04:00:00", end: "2024-01-02T08:00:00",
+     severity: 0.5, tags: [chlorine], label: fault}
+  - {fault: actuator_fault, start: "2024-01-02T10:00:00", end: "2024-01-02T16:00:00",
+     severity: 1.0, label: fault,
+     params: {pump_tag: pump_status, flow_tag: demand_flow, mode: pump_off_flow_high}}
+  - {fault: replay, start: "2024-01-02T18:00:00", end: "2024-01-03T00:00:00",
+     severity: 1.0, tags: [demand_flow, tank_level], label: fault}
+  - {fault: delayed_dropped, start: "2024-01-02T20:00:00", end: "2024-01-03T00:00:00",
+     severity: 0.8, tags: [chlorine], label: fault}
+  - {fault: demand_surge, start: "2024-01-02T06:00:00", end: "2024-01-02T10:00:00",
+     severity: 0.8, tags: [demand_flow], label: process_change}   # legitimate, NOT fault
+  - {fault: tank_refill, start: "2024-01-02T12:00:00", end: "2024-01-02T20:00:00",
+     severity: 0.6, tags: [tank_level], label: process_change}     # legitimate, NOT fault
+
+# severity sweep -> detection curve (reports/severity_curve.png/.json)
+sweep:
+  fault: additive_drift
+  tags: [tank_level]
+  start: "2024-01-02T08:00:00"
+  end: "2024-01-02T16:00:00"
+  severities: [0.05, 0.1, 0.2, 0.4, 0.8, 1.5, 3.0]
+  detector: simple_knn_trust
+  detector_params: {k: 5}
+  flag_quantile: 0.95        # threshold = 95th percentile of clean-window scores
+  min_detected_windows: 1
+  label: fault
+
+output:
+  dir: reports

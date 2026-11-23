@@ -1,0 +1,15 @@
+# TOY plant model simulation (src/gte_eval/sim/toy_plant.py) — clearly labeled
+# TOY: tank balance + chlorine contact CSTR + filter headloss growth with
+# noise. NOT calibrated, NOT WNTR, not for real plant claims.
+#   python -m water_gte_eval sim-toy configs/sim/toy_example.yaml
+name: toy-demo
+scenarios: 3
+seed_base: 42
+duration_h: 48
+dt_s: 60
+# any simulate_toy() kwarg can be overridden here, e.g.:
+# tank_area_m2: 100.0
+# k_chlorine_per_h: 0.1
+
+output:
+  dir: examples/sim_toy
