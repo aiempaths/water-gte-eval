@@ -44,6 +44,16 @@ class Window:
         """Per-tag sample arrays: {tag: matrix[:, i]}."""
         return {tag: self.matrix[:, i] for i, tag in enumerate(self.sensors)}
 
+    def to_adapter(self):
+        """Convert to a gte_eval.engine_adapter Window (engine/baseline input)."""
+        from gte_eval.engine_adapter.base import Window as AdapterWindow
+
+        sensors = {tag: [float(v) for v in arr] for tag, arr in self.sensor_arrays().items()}
+        timestamps = [pd.Timestamp(t).isoformat() for t in self.timestamps]
+        if not timestamps:
+            timestamps = [self.start.isoformat(), self.end.isoformat()]
+        return AdapterWindow(window_id=self.window_id, timestamps=timestamps, sensors=sensors)
+
 
 def _label_window(
     w_start: pd.Timestamp,

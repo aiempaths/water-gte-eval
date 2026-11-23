@@ -41,7 +41,7 @@ def test_prepare_end_to_end(processed, tmp_path, capsys):
     mpath = run_prepare(_write_cfg(tmp_path, _make_cfg(processed, out_dir)))
     manifest = json.loads(mpath.read_text())
     out = manifest["outputs"]["demo__example"]
-    assert out["n_windows"] > 0 and out["n_intervals"] == 3  # 2 attack runs + 1 fault run
+    assert out["n_windows"] > 0 and out["n_intervals"] == 4  # 3 attack runs + 1 fault run
     assert out["leakage"]["ok"] is True
 
     wdf = pd.read_parquet(out_dir / "demo__example_windows.parquet")

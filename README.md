@@ -165,24 +165,49 @@ python -m water_gte_eval prepare configs/prepare/batadal.yaml   # once data/proc
   listing every cross-stage time overlap or shared event_id. `prepare` runs the
   checker and prints window counts per split and per label.
 
+## Baselines
+
+`src/gte_eval/baselines/` implements a common interface —
+`fit(train_windows, labels)` / `score(window) -> float` untrust score
+(higher = less trustworthy) — so all baselines share the same metrics code:
+
+| name | idea |
+| --- | --- |
+| `zscore` | max \|z\| over per-tag summary stats vs train mean/std (limit checks) |
+| `iforest` | IsolationForest on summary stats; score = −decision_function |
+| `autoencoder` | reconstruction MSE of a small sklearn MLPRegressor bottleneck on summary stats |
+| `knn_raw` | mean distance to k nearest train windows on RAW downsampled values |
+| `conformal` | split-conformal: logistic regression on summary stats, contiguous fit/cal split; score = P(positive); `conformal_threshold(alpha)` exposed |
+| `simple_knn_trust` | the engine's two-score design (closeness + agreement, `score_parts()`) on PLAIN summary stats (mean, std, min, max, slope) — tests whether the geometric fingerprint adds anything |
+
+Driver: `python -m water_gte_eval baselines configs/baselines/example.yaml`
+(after `prepare`). Fits on the train stage, picks the flag threshold on val
+(best F1, or conformal quantile), scores test, and writes `runs/<config_hash>/`
+with `baselines.json` (per baseline: threshold, val metrics, test ROC-AUC,
+window-level + event-level metrics, bootstrap CIs over events) and
+`baseline_scores(_wide).parquet`. All seeded and deterministic; a perf smoke
+runs all six on 2400 windows in seconds.
+
 ## Layout
 
 ```
-configs/    experiment + ingest + prepare configs, tags.yaml
+configs/    experiment + ingest + prepare + baselines configs, tags.yaml
 data/       raw/ (place BATADAL/SWaT files here), processed/ (generated parquet + manifest.json)
 docs/       engine_contract.md (exact JSON/HTTP/receipt contract)
 examples/   synthetic example-data generators (NOT real plant data)
 src/gte_eval/engine_adapter/   EngineAdapter, MockEngine, HttpEngine, registry (Prompt 2)
+src/gte_eval/baselines/        common Baseline interface + 6 baselines + registry
 src/water_gte_eval/
   config.py            experiment config loading, validation, config hash
   data/                loader (parquet/csv, schema checks), windows, splits
   engine/              re-exports the gte_eval.engine_adapter interface (single interface)
   ingest/              detect, batadal, generic_csv, validator, pipeline, ingest config
   prepare.py           processed parquet -> windows + labels + staged split + leakage check
+  baseline_eval.py     windows parquet -> baselines -> runs/<config_hash>/ shared metrics
   data/                loader, windows/windowing, labeling, splits + leakage checker
   metrics/             window-level, event-level, bootstrap CIs
   runner.py            one config -> runs/<config_hash>/
-  cli.py               python -m water_gte_eval {run, ingest, prepare, make-example-*}
+  cli.py               python -m water_gte_eval {run, ingest, prepare, baselines, make-example-*}
 tests/                 pytest suite: engine contract tests (any adapter), fake FastAPI
                        server, ingest tests (gaps/duplicates/unit-less/flatline), e2e determinism
 ```

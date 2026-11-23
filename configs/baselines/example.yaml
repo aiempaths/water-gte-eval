@@ -1,0 +1,42 @@
+# Runnable example: baselines on the synthetic prepared windows.
+#   python -m water_gte_eval make-example-processed
+#   python -m water_gte_eval prepare configs/prepare/example.yaml
+#   python -m water_gte_eval baselines configs/baselines/example.yaml
+name: example-baselines
+seed: 42
+
+windows_path: examples/prepare_out/example__example_windows.parquet   # from `prepare`
+
+labels:
+  positive: attack
+
+stages:
+  fit: train
+  threshold: val
+  eval: test
+
+baselines: [zscore, iforest, autoencoder, knn_raw, conformal, simple_knn_trust]
+
+params:
+  zscore: {limit: 3.0}
+  iforest: {n_estimators: 100, max_samples: 256, contamination: 0.05}
+  autoencoder: {hidden: 8, max_iter: 300}
+  knn_raw: {k: 5, downsample: 16}
+  conformal: {cal_frac: 0.5, positive_label: attack}
+  simple_knn_trust: {k: 5}
+
+threshold:
+  mode: val_best_f1     # val_best_f1 | conformal (conformal only affects the conformal baseline)
+  # alpha: 0.1
+
+event_metrics:
+  min_detected_windows: 1
+
+bootstrap:
+  unit: events
+  n_resamples: 1000
+  ci: 0.95
+  seed: 42
+
+output:
+  runs_dir: runs

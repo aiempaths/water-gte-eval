@@ -137,6 +137,9 @@ def generate_example_processed(out_dir: str | Path, seed: int = 42) -> dict[str,
     m3 = (idx >= pd.Timestamp("2024-06-20")) & (idx < pd.Timestamp("2024-06-21"))
     attack[m3] = 2
     level[m3] += 0.5
+    m4 = (idx >= pd.Timestamp("2024-06-25")) & (idx < pd.Timestamp("2024-06-26"))
+    attack[m4] = 1
+    flow[m4] *= 0.7
     df = pd.DataFrame(
         {"flow": flow, "pressure": pressure, "level": level, "chlorine": chlorine, "attack": attack},
         index=idx,

@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+from .baseline_eval import run_baseline_eval
 from .devdata import generate_example_data, generate_example_processed, generate_example_raw
 from .ingest import run_ingest
 from .prepare import run_prepare
@@ -68,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
         help="run a prepare config: processed parquet -> labeled windows -> staged split + leakage check",
     )
     prep.add_argument("config", help="path to a prepare YAML config (configs/prepare/*.yaml)")
+    bl = sub.add_parser(
+        "baselines",
+        help="run baseline evaluation on prepared windows: runs/<config_hash>/",
+    )
+    bl.add_argument("config", help="path to a baselines YAML config (configs/baselines/*.yaml)")
     m3 = sub.add_parser(
         "make-example-processed",
         help="generate a synthetic processed-style parquet for trying `prepare` (NOT real plant data)",
@@ -102,6 +108,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "prepare":
         run_prepare(args.config)
+        return 0
+    if args.command == "baselines":
+        run_baseline_eval(args.config)
         return 0
     return 2
 
