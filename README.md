@@ -245,10 +245,30 @@ per-mode caches in `.cache/` keyed by config hash + git commit + windows-file ha
 A spy-engine test proves no test label is ever visible in history at scoring time
 (all modes × outcomes).
 
+## Report
+
+```bash
+python -m water_gte_eval eval configs/run/example.yaml
+python -m water_gte_eval report runs/<config_hash>/ --config configs/report/default.yaml
+# -> reports/<config_hash>/report.md + PNG figures, built from results.parquet ALONE
+```
+
+Per method (`engine__<mode>` per history mode, `baseline__<name>` per baseline) on
+the test split: AUROC/AUPRC, false-trust rate at review budgets (5/10/20%),
+risk-coverage curve (coverage vs error as least-trusted windows are routed to
+humans; one PNG per method), workload (escalations/hour), event-level detection
+fraction + detection delay, and discrimination of fault vs legitimate
+process_change (per event label + window AUROC). All with bootstrap CIs resampled
+over events/scenarios (`bootstrap_n`). `failures_first` lists the highest-confidence
+wrong "trust" windows (lowest untrust score among trusted-but-anomalous) with
+neighbors and plots. The report ends with a plain-language **claims supported /
+not supported** section stating the number of independent events and refusing
+conclusions the sample size can't carry (configurable `min_events_for_claims`).
+
 ## Layout
 
 ```
-configs/    experiment + ingest + prepare + baselines + sim + inject + run configs, tags.yaml
+configs/    experiment + ingest + prepare + baselines + sim + inject + run + report configs, tags.yaml
 data/       raw/ (place BATADAL/SWaT files here), processed/ (generated parquet + manifest.json)
 docs/       engine_contract.md (exact JSON/HTTP/receipt contract)
 examples/   synthetic example-data generators (NOT real plant data)
@@ -265,12 +285,14 @@ src/water_gte_eval/
   baseline_eval.py     windows parquet -> baselines -> runs/<config_hash>/ shared metrics
   inject_eval.py       inject-demo: example plots + severity curve -> reports/
   engine_run.py        eval: windows -> history modes -> engine+baselines -> runs/<hash>/
+  report.py            report: results.parquet -> reports/<hash>/report.md + PNGs
+  report_metrics.py    pure metric fns (risk-coverage, budgets, AUROC/AUPRC, events, bootstrap)
   data/                loader, windows/windowing, labeling, splits + leakage checker
   metrics/             window-level, event-level, bootstrap CIs
   runner.py            one config -> runs/<config_hash>/
   cli.py               python -m water_gte_eval {run, ingest, prepare, baselines, eval,
-                       sim-wntr, sim-toy, inject-demo, make-example-*}
-reports/               inject-demo plots/curves (generated)
+                       report, sim-wntr, sim-toy, inject-demo, make-example-*}
+reports/               generated reports + inject-demo figures
 tests/                 pytest suite: engine contract tests (any adapter), fake FastAPI
                        server, ingest tests (gaps/duplicates/unit-less/flatline), e2e determinism
 ```

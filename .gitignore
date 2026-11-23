@@ -17,3 +17,5 @@ reports/*.json
 reports/*.parquet
 examples/sim_wntr/
 examples/sim_toy/
+reports/*/
+!reports/.gitkeep

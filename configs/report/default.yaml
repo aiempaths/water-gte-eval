@@ -1,0 +1,14 @@
+# Report generator config (all optional; these are the defaults).
+#   python -m water_gte_eval report runs/<config_hash>/ --config configs/report/default.yaml
+bootstrap_n: 1000        # bootstrap resamples over events/scenarios
+ci: 0.95
+seed: 42
+budgets: [0.05, 0.10, 0.20]   # review budgets for false-trust rate
+positive_labels: [attack, fault]       # anomalous/wrong labels
+discrimination_labels: [fault, process_change]  # fault vs legitimate
+split: test
+min_detected_windows: 1
+failures_top_k: 5
+min_events_for_claims: 5   # below this, the report refuses method-comparison claims
+windows_path: null         # optional prepare windows parquet for raw tag plots of failure windows
+output_dir: reports

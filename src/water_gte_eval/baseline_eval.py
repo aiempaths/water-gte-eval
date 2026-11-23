@@ -95,6 +95,7 @@ def load_windows_parquet(path: str | Path) -> list[Window]:
                 label=str(row["label"]),
                 scenario=str(row.get("event_id", "") or "background"),
                 event_key=str(row["event_id"]) if str(row.get("event_id", "")) else None,
+                event_id=str(row["event_id"]) if str(row.get("event_id", "")) else None,
                 tag_group=str(row.get("tag_group", "default")),
                 stage=str(row["stage"]),
             )

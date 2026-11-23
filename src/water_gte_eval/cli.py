@@ -20,6 +20,7 @@ from .engine_run import run_engine_eval
 from .ingest import run_ingest
 from .inject_eval import run_inject_demo
 from .prepare import run_prepare
+from .report import build_report
 from .runner import run_experiment
 
 
@@ -90,6 +91,12 @@ def main(argv: list[str] | None = None) -> int:
         help="full engine+baseline eval on prepared windows -> runs/<config_hash>/",
     )
     ev.add_argument("config", help="path to a run YAML config (configs/run/*.yaml)")
+    rp = sub.add_parser(
+        "report",
+        help="build reports/<run_hash>/report.md + PNGs from a run dir's results.parquet",
+    )
+    rp.add_argument("run_dir", help="run dir containing results.parquet (runs/<config_hash>/)")
+    rp.add_argument("--config", default=None, help="optional report YAML (defaults built-in; see configs/report/default.yaml)")
     m3 = sub.add_parser(
         "make-example-processed",
         help="generate a synthetic processed-style parquet for trying `prepare` (NOT real plant data)",
@@ -141,6 +148,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "eval":
         run_engine_eval(args.config)
+        return 0
+    if args.command == "report":
+        build_report(args.run_dir, args.config)
         return 0
     return 2
 
