@@ -1,0 +1,30 @@
+# Full engine+baseline evaluation on real BATADAL prepared windows.
+#   ingest -> prepare -> eval
+#   python -m water_gte_eval eval configs/run/batadal.yaml
+name: batadal-run
+seed: 42
+
+windows_path: data/processed/batadal__<scenario>_windows.parquet   # set after prepare
+
+engine:
+  type: mock                # real engine: type http with your API params
+  params: {k: 5, closeness_max: 2.0, agreement_min: 0.6}
+
+modes: [frozen, rolling, cold_start]
+cold_start: {n_history: 50}
+
+outcome: attack_normal
+positive_label: attack
+
+baselines: [zscore, iforest, autoencoder, knn_raw, conformal, simple_knn_trust]
+baseline_params:
+  autoencoder: {hidden: 8, max_iter: 300}
+  iforest: {n_estimators: 100, max_samples: 256}
+
+threshold: {mode: val_best_f1}
+resume: true
+
+event_metrics: {min_detected_windows: 1}
+bootstrap: {unit: events, n_resamples: 1000, ci: 0.95, seed: 42}
+
+output: {runs_dir: runs}

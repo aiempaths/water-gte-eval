@@ -219,10 +219,36 @@ python -m water_gte_eval inject-demo configs/inject/example.yaml  # plots + seve
   detector baseline fit on clean windows -> `reports/severity_curve.png/.json`
   (event recall vs severity) + `injected_intervals.parquet` + `inject_demo.json`.
 
+## Full evaluation run (engine + baselines)
+
+```bash
+python -m water_gte_eval prepare configs/prepare/example.yaml
+python -m water_gte_eval eval configs/run/example.yaml     # -> runs/<config_hash>/
+```
+
+`src/water_gte_eval/engine_run.py` (`eval` command): loads windows from a prepare
+parquet (or builds them inline via a `prepare:` section), builds history from
+**train only** with the config `outcome` label definition (`next_window_state` |
+`attack_normal` | `fault_type`), and scores val/test through the chosen
+`EngineAdapter` in the configured `modes`: `frozen` (train history, added only
+when `end < scored.start`), `rolling` (each scored window joins the history only
+after being scored, with only labels knowable by then), `cold_start` (history
+subsampled to N). All configured baselines run on the identical windows.
+Outputs in `runs/<config_hash>/`: `results.parquet` (one row per mode×window:
+config hash, git commit, mode, split, window_id, event_id, true label, engine
+closeness/agreement/verdict/receipt/neighbors/flag, per-baseline score+flag),
+`engine_log.parquet` (per-window latency — kept out of results.parquet so re-runs
+are **byte-identical**, acceptance-tested), `metrics.json` (per-mode engine
+metrics; per-baseline metrics with thresholds **chosen on val, frozen, applied
+to test**), `manifest.json`, `config.yaml`, `environment.json`. Resume/caching:
+per-mode caches in `.cache/` keyed by config hash + git commit + windows-file hash.
+A spy-engine test proves no test label is ever visible in history at scoring time
+(all modes × outcomes).
+
 ## Layout
 
 ```
-configs/    experiment + ingest + prepare + baselines + sim + inject configs, tags.yaml
+configs/    experiment + ingest + prepare + baselines + sim + inject + run configs, tags.yaml
 data/       raw/ (place BATADAL/SWaT files here), processed/ (generated parquet + manifest.json)
 docs/       engine_contract.md (exact JSON/HTTP/receipt contract)
 examples/   synthetic example-data generators (NOT real plant data)
@@ -238,10 +264,11 @@ src/water_gte_eval/
   prepare.py           processed parquet -> windows + labels + staged split + leakage check
   baseline_eval.py     windows parquet -> baselines -> runs/<config_hash>/ shared metrics
   inject_eval.py       inject-demo: example plots + severity curve -> reports/
+  engine_run.py        eval: windows -> history modes -> engine+baselines -> runs/<hash>/
   data/                loader, windows/windowing, labeling, splits + leakage checker
   metrics/             window-level, event-level, bootstrap CIs
   runner.py            one config -> runs/<config_hash>/
-  cli.py               python -m water_gte_eval {run, ingest, prepare, baselines,
+  cli.py               python -m water_gte_eval {run, ingest, prepare, baselines, eval,
                        sim-wntr, sim-toy, inject-demo, make-example-*}
 reports/               inject-demo plots/curves (generated)
 tests/                 pytest suite: engine contract tests (any adapter), fake FastAPI

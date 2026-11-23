@@ -16,6 +16,7 @@ import yaml
 
 from .baseline_eval import run_baseline_eval
 from .devdata import generate_example_data, generate_example_processed, generate_example_raw
+from .engine_run import run_engine_eval
 from .ingest import run_ingest
 from .inject_eval import run_inject_demo
 from .prepare import run_prepare
@@ -84,6 +85,11 @@ def main(argv: list[str] | None = None) -> int:
     ij = sub.add_parser("inject-demo",
                         help="inject faults into clean telemetry: example plots + severity sweep curve -> reports/")
     ij.add_argument("config", help="path to an inject YAML config (configs/inject/example.yaml)")
+    ev = sub.add_parser(
+        "eval",
+        help="full engine+baseline eval on prepared windows -> runs/<config_hash>/",
+    )
+    ev.add_argument("config", help="path to a run YAML config (configs/run/*.yaml)")
     m3 = sub.add_parser(
         "make-example-processed",
         help="generate a synthetic processed-style parquet for trying `prepare` (NOT real plant data)",
@@ -132,6 +138,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "inject-demo":
         run_inject_demo(args.config)
+        return 0
+    if args.command == "eval":
+        run_engine_eval(args.config)
         return 0
     return 2
 

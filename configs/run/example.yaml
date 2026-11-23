@@ -1,0 +1,40 @@
+# Full engine+baseline evaluation on the synthetic prepared windows.
+#   python -m water_gte_eval make-example-processed
+#   python -m water_gte_eval prepare configs/prepare/example.yaml
+#   python -m water_gte_eval eval configs/run/example.yaml
+name: example-run
+seed: 42
+
+windows_path: examples/prepare_out/example__example_windows.parquet   # from `prepare`
+# alternative: build windows inline instead of windows_path:
+# prepare:
+#   source: {path: examples/processed_demo/example.parquet, label_column: attack,
+#            label_map: {"0": normal, "1": attack, "2": fault}, default_label: normal}
+#   window: {length: 24, stride: 6}
+#   labeling: {min_overlap_frac: 0.5, lag: 2h}
+#   split: {val_frac: 0.15, test_frac: 0.15}
+
+engine:
+  type: mock                # or http (see configs/example_http.yaml)
+  params: {k: 5, closeness_max: 2.0, agreement_min: 0.6}
+
+modes: [frozen, rolling, cold_start]   # history modes
+cold_start: {n_history: 50}             # history subsampled to N windows
+
+outcome: attack_normal                  # history label: next_window_state | attack_normal | fault_type
+positive_label: attack
+
+baselines: [zscore, iforest, knn_raw, simple_knn_trust, conformal, autoencoder]
+baseline_params:
+  autoencoder: {hidden: 4, max_iter: 150}
+  iforest: {n_estimators: 50}
+
+threshold:
+  mode: val_best_f1        # chosen on VAL, frozen, applied to test (never fit on test)
+
+resume: true               # reuse per-mode caches in runs/<hash>/.cache when valid
+
+event_metrics: {min_detected_windows: 1}
+bootstrap: {unit: events, n_resamples: 1000, ci: 0.95, seed: 42}
+
+output: {runs_dir: runs}
