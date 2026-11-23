@@ -1,0 +1,4 @@
+Place real datasets here:
+  data/telemetry.parquet (or .csv)  - telemetry samples: timestamp + sensor columns
+  data/events.parquet (or .csv)     - labeled events: scenario, start, end, label
+Then fill in the column mapping in configs/water_gte.yaml.

@@ -1,0 +1,64 @@
+# Template for REAL experiments. Place your files, then replace every
+# "<...>" placeholder with the real column names of your files.
+#
+# What to place where:
+#   data/telemetry.parquet (or .csv)  - one row per telemetry sample, with a
+#                                       timestamp column and one column per sensor
+#   data/events.parquet (or .csv)     - one row per labeled event/scenario, with
+#                                       scenario id, start, end, and label columns
+# The loader validates the mapping against the actual files and, if anything
+# is missing, errors out listing the file to place and the columns it found.
+name: water-gte
+seed: 42
+
+dataset:
+  path: data/telemetry.parquet
+  # format: parquet            # optional; inferred from the extension (.parquet/.csv)
+  columns:
+    timestamp: "<timestamp column in your telemetry file>"
+    sensors: ["<sensor column 1>", "<sensor column 2>"]
+
+events:
+  path: data/events.parquet
+  columns:
+    scenario: "<scenario/event id column>"
+    start: "<event start column>"
+    end: "<event end column>"
+    label: "<event label column>"
+
+window:
+  size: 1h
+  step: 15min
+
+split:
+  history_end: "<timestamp: end of the history period>"
+  eval_start: "<timestamp: start of the eval period, >= history_end>"
+  eval_end: "<timestamp: end of the eval period>"
+  holdout_scenarios: []   # scenario ids to exclude from eval (scenario split)
+
+labels:
+  positive: "<label value that counts as positive, e.g. attack>"
+  default: "<label for windows outside any event, e.g. normal>"
+
+engine:
+  type: mock              # replace with the real GTE adapter once registered
+  params: {}
+
+decision:
+  mode: verdict
+  route_verdict: route_to_human
+  # mode: thresholds
+  # max_closeness: 2.0    # flag when farther than this
+  # min_agreement: 0.6    # flag when agreement below this
+
+event_metrics:
+  min_detected_windows: 1
+
+bootstrap:
+  unit: events
+  n_resamples: 1000
+  ci: 0.95
+  seed: null
+
+output:
+  runs_dir: runs

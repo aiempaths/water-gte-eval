@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "water-gte-eval"
+version = "0.1.0"
+description = "Reproducible evaluation harness for a Geometric Trust Engine (GTE) on water-treatment/distribution telemetry"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "pyarrow",
+    "pyyaml",
+    "requests",
+    "matplotlib",
+    "pytest",
+    "wntr",
+]
+
+[project.scripts]
+water-gte-eval = "water_gte_eval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

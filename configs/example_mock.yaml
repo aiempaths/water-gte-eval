@@ -1,0 +1,56 @@
+# Fully self-contained example: runs with the MockEngine on the synthetic
+# example dataset (generate it first: python -m water_gte_eval make-example-data).
+# Run from the repo root: python -m water_gte_eval run configs/example_mock.yaml
+name: example-mock
+seed: 42
+
+dataset:
+  path: examples/data/telemetry.parquet   # .parquet or .csv
+  columns:
+    timestamp: timestamp
+    sensors: [flow, pressure, level, chlorine]
+
+events:
+  path: examples/data/events.parquet      # .parquet or .csv
+  columns:
+    scenario: scenario
+    start: start
+    end: end
+    label: label
+
+window:
+  size: 1h      # pandas duration
+  step: 15min
+
+split:          # by time (never random); history strictly precedes eval
+  history_end: "2024-06-01T00:00:00"
+  eval_start: "2024-06-01T00:00:00"
+  eval_end: "2024-07-01T00:00:00"
+  holdout_scenarios: [drift_holdout]      # scenario-based split: excluded from eval
+
+labels:
+  positive: anomaly   # label value counted as positive
+  default: normal     # label for windows overlapping no event
+
+engine:
+  type: mock           # the only registered engine until the real GTE is plugged in
+  params:
+    k: 5
+    closeness_max: 2.0
+    agreement_min: 0.6
+
+decision:             # downstream: close+agreeing = trust; far or mixed = route to human
+  mode: verdict       # verdict | thresholds
+  route_verdict: route_to_human
+
+event_metrics:
+  min_detected_windows: 1   # flagged windows within an event needed to count it detected
+
+bootstrap:            # CIs over events/scenarios, never over windows
+  unit: events        # events | scenarios
+  n_resamples: 1000
+  ci: 0.95
+  seed: 42            # defaults to the top-level seed when null
+
+output:
+  runs_dir: runs      # outputs go to runs/<config_hash>/
