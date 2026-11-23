@@ -10,3 +10,5 @@ data/*.csv
 examples/raw/
 examples/processed/
 data/processed/
+examples/processed_demo/
+examples/prepare_out/

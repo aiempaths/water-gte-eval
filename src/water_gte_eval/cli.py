@@ -12,8 +12,9 @@ import json
 import sys
 from pathlib import Path
 
-from .devdata import generate_example_data, generate_example_raw
+from .devdata import generate_example_data, generate_example_processed, generate_example_raw
 from .ingest import run_ingest
+from .prepare import run_prepare
 from .runner import run_experiment
 
 
@@ -62,6 +63,16 @@ def main(argv: list[str] | None = None) -> int:
         help="run an ingest config: raw files -> data/processed parquet + manifest.json + quality report",
     )
     ing.add_argument("config", help="path to an ingest YAML config (configs/ingest/*.yaml)")
+    prep = sub.add_parser(
+        "prepare",
+        help="run a prepare config: processed parquet -> labeled windows -> staged split + leakage check",
+    )
+    prep.add_argument("config", help="path to a prepare YAML config (configs/prepare/*.yaml)")
+    m3 = sub.add_parser(
+        "make-example-processed",
+        help="generate a synthetic processed-style parquet for trying `prepare` (NOT real plant data)",
+    )
+    m3.add_argument("--out", default="examples/processed_demo", help="output directory")
     args = parser.parse_args(argv)
 
     if args.command == "run":
@@ -80,8 +91,17 @@ def main(argv: list[str] | None = None) -> int:
         for k, v in paths.items():
             print(f"  {k}: {v}")
         return 0
+    if args.command == "make-example-processed":
+        paths = generate_example_processed(args.out)
+        print("synthetic processed-style parquet written (NOT real plant data):")
+        for k, v in paths.items():
+            print(f"  {k}: {v}")
+        return 0
     if args.command == "ingest":
         run_ingest(args.config)
+        return 0
+    if args.command == "prepare":
+        run_prepare(args.config)
         return 0
     return 2
 

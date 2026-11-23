@@ -140,10 +140,35 @@ python -m water_gte_eval ingest configs/ingest/batadal.yaml     # real BATADAL o
   `manifest.json` with source file sha256s, row counts, date ranges, detected
   schemas, and quality reports. Deterministic: no wall-clock fields.
 
+## Prepare: windows, labels, splits
+
+```bash
+python -m water_gte_eval make-example-processed
+python -m water_gte_eval prepare configs/prepare/example.yaml   # prints counts per split and per label
+python -m water_gte_eval prepare configs/prepare/batadal.yaml   # once data/processed/ exists
+```
+
+- **Windowing** (`data/windowing.py`): sliding windows by length/stride **in
+  samples** over the tidy frame; each `Window` has window_id, half-open
+  [start, end), per-tag arrays (`sensor_arrays()`), a `tag_group`, and later a
+  `stage`. The same Window objects feed the engine and all baselines.
+- **Labeling** (`data/labeling.py`): labeled intervals (explicit file, or derived
+  from runs of the sample-level label column) with columns event_id/start/end/label.
+  A window gets label L when >= `min_overlap_frac` of its samples fall in
+  [start, end + `lag`) — per-label overrides supported; `priority` breaks ties;
+  unlabeled windows get `default_label`. Every labeled window carries its
+  `event_id` (for event-level bootstrapping).
+- **Splits** (`data/splits.py`): `assign_stages` gives time-ordered
+  train/val/test; cuts snap so an entire event stays in one split, and a guard
+  band drops boundary windows of the earlier stage so no two stages overlap in
+  time (needed when stride < length). `check_leakage` raises `LeakageError`
+  listing every cross-stage time overlap or shared event_id. `prepare` runs the
+  checker and prints window counts per split and per label.
+
 ## Layout
 
 ```
-configs/    experiment configs + ingest configs (batadal, swat_wadi_template, example) + tags.yaml
+configs/    experiment + ingest + prepare configs, tags.yaml
 data/       raw/ (place BATADAL/SWaT files here), processed/ (generated parquet + manifest.json)
 docs/       engine_contract.md (exact JSON/HTTP/receipt contract)
 examples/   synthetic example-data generators (NOT real plant data)
@@ -153,9 +178,11 @@ src/water_gte_eval/
   data/                loader (parquet/csv, schema checks), windows, splits
   engine/              re-exports the gte_eval.engine_adapter interface (single interface)
   ingest/              detect, batadal, generic_csv, validator, pipeline, ingest config
+  prepare.py           processed parquet -> windows + labels + staged split + leakage check
+  data/                loader, windows/windowing, labeling, splits + leakage checker
   metrics/             window-level, event-level, bootstrap CIs
   runner.py            one config -> runs/<config_hash>/
-  cli.py               python -m water_gte_eval {run, ingest, make-example-data, make-example-raw}
+  cli.py               python -m water_gte_eval {run, ingest, prepare, make-example-*}
 tests/                 pytest suite: engine contract tests (any adapter), fake FastAPI
                        server, ingest tests (gaps/duplicates/unit-less/flatline), e2e determinism
 ```

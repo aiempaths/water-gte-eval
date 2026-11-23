@@ -22,7 +22,7 @@ BACKGROUND = "background"
 class Window:
     window_id: str
     start: pd.Timestamp
-    end: pd.Timestamp
+    end: pd.Timestamp  # exclusive bound: first timestamp NOT in the window
     matrix: np.ndarray  # (n_samples, n_sensors) float64
     sensors: tuple[str, ...]
     label: str
@@ -30,12 +30,19 @@ class Window:
     event_key: str | None = None
     meta: dict = field(default_factory=dict)
     timestamps: tuple = ()  # per-sample pd.Timestamp values in the window
+    tag_group: str = "default"  # which tag group this window carries
+    stage: str | None = None    # split assignment: train | val | test (set by splits)
+    event_id: str | None = None  # id of the labeled interval that produced the label
 
     def feature_vector(self) -> np.ndarray:
         """Per-sensor [mean, std] summary used by the MockEngine."""
         mean = self.matrix.mean(axis=0)
         std = self.matrix.std(axis=0)
         return np.concatenate([mean, std]).astype(np.float64)
+
+    def sensor_arrays(self) -> dict[str, np.ndarray]:
+        """Per-tag sample arrays: {tag: matrix[:, i]}."""
+        return {tag: self.matrix[:, i] for i, tag in enumerate(self.sensors)}
 
 
 def _label_window(

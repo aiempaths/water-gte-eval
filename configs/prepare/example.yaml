@@ -1,0 +1,34 @@
+# Runnable example: prepare windows+splits on the synthetic processed parquet.
+#   python -m water_gte_eval make-example-processed
+#   python -m water_gte_eval prepare configs/prepare/example.yaml
+name: example
+
+source:
+  path: examples/processed_demo/example.parquet   # tidy parquet from ingest (DatetimeIndex + tags + label column)
+  label_column: attack          # sample-level label column; intervals are derived from its runs
+  label_map: {"0": normal, "1": attack, "2": fault}
+  default_label: normal
+  # tag_columns: null           # null = all numeric columns except the label column
+  # tag_group: default
+
+# intervals:                    # optional explicit intervals instead of deriving from label_column
+#   path: data/processed/events.parquet
+#   columns: {event_id: event_id, start: start, end: end, label: label}
+
+window:
+  length: 24      # in samples
+  stride: 6       # in samples
+
+labeling:
+  min_overlap_frac: 0.5         # window is labeled L if >= 50% of its samples fall in an L interval
+  label_overrides: {attack: 0.3}  # per-label override of the fraction
+  lag: 2h                       # lag buffer after each interval end (effects persist)
+  priority: [attack, fault, process_change, normal]
+  # default_label: normal
+
+split:
+  val_frac: 0.15
+  test_frac: 0.15
+
+output:
+  dir: examples/prepare_out

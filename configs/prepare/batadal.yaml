@@ -1,0 +1,28 @@
+# Prepare BATADAL windows+splits from the ingested processed parquet.
+# After `ingest configs/ingest/batadal.yaml` has written data/processed/, fill in
+# the detected attack-label column name below (see the ingest manifest/quality
+# report for the detected label column), then:
+#   python -m water_gte_eval prepare configs/prepare/batadal.yaml
+name: batadal
+
+source:
+  path: data/processed               # directory of ingested parquet files
+  label_column: "<attack label column detected at ingest>"
+  # label_map: {"0": normal, "1": attack}   # map raw label values to label names
+  default_label: normal
+
+window:
+  length: 24      # samples (BATADAL is hourly -> 24 = 1 day)
+  stride: 6       # samples
+
+labeling:
+  min_overlap_frac: 0.5
+  lag: 2h
+  priority: [attack, fault, process_change, normal]
+
+split:
+  val_frac: 0.15
+  test_frac: 0.15
+
+output:
+  dir: data/processed
