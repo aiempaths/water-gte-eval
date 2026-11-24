@@ -19,3 +19,6 @@ examples/sim_wntr/
 examples/sim_toy/
 reports/*/
 !reports/.gitkeep
+temp.bin
+temp.inp
+temp.rpt
