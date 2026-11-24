@@ -29,6 +29,19 @@ def verify_run_receipts(run_dir: str | Path) -> dict:
             f"{run_dir} must contain results.parquet and config.yaml (a run dir from `eval`)"
         )
     cfg = load_run_config(config_path)
+    # configs use repo-root-relative paths; resolve them against the CWD first,
+    # then against the run dir's grandparent (runs/<hash> -> repo root)
+    for key in ("windows_path",):
+        if cfg.get(key) and not Path(cfg[key]).is_absolute():
+            p = Path(cfg[key])
+            if not p.exists() and (run_dir.parents[1] / p).exists():
+                cfg[key] = str(run_dir.parents[1] / p)
+    if isinstance(cfg.get("prepare"), dict) and isinstance(cfg["prepare"].get("source"), dict):
+        sp = cfg["prepare"]["source"].get("path")
+        if sp and not Path(sp).is_absolute():
+            p = Path(sp)
+            if not p.exists() and (run_dir.parents[1] / p).exists():
+                cfg["prepare"]["source"]["path"] = str(run_dir.parents[1] / p)
     windows, _ = _load_or_build_windows(cfg)
     by_id = {w.window_id: w.to_adapter() for w in windows}
 

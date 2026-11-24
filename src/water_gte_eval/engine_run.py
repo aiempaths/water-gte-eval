@@ -34,7 +34,7 @@ from gte_eval.engine_adapter.base import canonical_json
 
 from .baseline_eval import best_threshold, load_windows_parquet
 from .config import config_hash
-from .data import Window
+from .data import Window, check_leakage
 from .engine import AdapterWindow, HistoryWindow, make_engine
 from .metrics import bootstrap_event_metrics, build_event_records, event_metrics, window_metrics
 from .perturb import PERTURBATIONS, apply_perturbation
@@ -233,10 +233,17 @@ def _run_mode(mode: str, engine_cfg: dict, train: list[Window], scored: list[Win
                    if poison_frac else {})
 
     scored_sorted = sorted(scored, key=lambda w: (w.start, w.window_id))
-    scored_ids = [w.window_id for w in scored_sorted]
-    next_of = {scored_ids[i]: (scored_sorted[i + 1] if i + 1 < len(scored_sorted) else None)
-               for i in range(len(scored_ids))}
     train_ids = {w.window_id for w in train}
+    # next_window_state is computed WITHIN a stage only: the "next window" of the
+    # last val window is NOT the first test window — using it would leak a test
+    # label into the history while scoring test. Last window of a stage -> None.
+    by_stage: dict[str, list[Window]] = {}
+    for w in scored_sorted:
+        by_stage.setdefault(w.stage, []).append(w)
+    next_of: dict[str, Window | None] = {}
+    for ws in by_stage.values():
+        for i, w in enumerate(ws):
+            next_of[w.window_id] = ws[i + 1] if i + 1 < len(ws) else None
 
     pool = list(hist_pool)          # candidate history windows (train, or scored in rolling)
     added: set[str] = set()
@@ -253,7 +260,7 @@ def _run_mode(mode: str, engine_cfg: dict, train: list[Window], scored: list[Win
                     continue  # next window hasn't happened yet -> label not knowable
                 label = nxt.label if nxt is not None else h.label
             else:
-                label = outcome_fn(h, train if h.window_id in train_ids else scored_sorted)
+                label = outcome_fn(h, train if h.window_id in train_ids else by_stage[h.stage])
             if (poison_flip.get(h.window_id) and h.window_id in train_ids
                     and outcome == "attack_normal" and h.label == positive):
                 label = "normal"  # poisoned history: attack window mislabeled normal
@@ -330,6 +337,7 @@ def run_engine_eval(config_path: str | Path) -> Path:
         if s not in by_stage or not by_stage[s]:
             raise RunConfigError(f"stage {s!r} missing/empty; windows must come from prepare with stages")
     train, val, test = by_stage["train"], by_stage["val"], by_stage["test"]
+    check_leakage(train, val, test)  # fail loudly on time overlap / shared event_id (LeakageError)
     scored = sorted(val + test, key=lambda w: (w.start, w.window_id))
     positive = cfg.get("positive_label", "attack")
     outcome = cfg.get("outcome", "attack_normal")

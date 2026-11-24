@@ -149,8 +149,13 @@ def test_no_test_label_ever_in_history_at_scoring(prepared, tmp_path, monkeypatc
     stage_of = dict(zip(wdf["window_id"], wdf["stage"]))
     scored_ids = [w for w in wdf[wdf["stage"].isin(["val", "test"])]
                   .sort_values("start")["window_id"]]
-    next_label = {scored_ids[i]: (label_of[scored_ids[i + 1]] if i + 1 < len(scored_ids)
-                                  else label_of[scored_ids[i]]) for i in range(len(scored_ids))}
+    # next_window_state is WITHIN a stage: the next window of the last val window
+    # is NOT the first test window (crossing would leak a test label into history)
+    next_label = {}
+    for stage in ("val", "test"):
+        ids = [w for w in scored_ids if stage_of[w] == stage]
+        for i, w in enumerate(ids):
+            next_label[w] = label_of[ids[i + 1]] if i + 1 < len(ids) else label_of[w]
 
     assert len(spies) == 1
     spy = spies[0]
@@ -167,9 +172,21 @@ def test_no_test_label_ever_in_history_at_scoring(prepared, tmp_path, monkeypatc
                 assert start_of[h_id] < w_start
                 if outcome == "next_window_state":
                     assert h_label == next_label[h_id]
-                    nxt = scored_ids[scored_ids.index(h_id) + 1] if h_id in scored_ids and \
-                        scored_ids.index(h_id) + 1 < len(scored_ids) else h_id
-                    assert start_of[nxt] <= w_start
+                    if stage_of[h_id] == "val":
+                        # a val window's history label must never be a TEST window's
+                        # label (cross-stage next_window_state leak)
+                        test_labels = {label_of[w] for w in scored_ids if stage_of[w] == "test"}
+                        last_val = max((w for w in scored_ids if stage_of[w] == "val"),
+                                       key=lambda w: start_of[w])
+                        if h_id == last_val:
+                            assert h_label == label_of[h_id], \
+                                "last val window must fall back to its OWN label, not the first test window's"
+                        assert h_label not in test_labels or h_label == label_of[h_id]
+                    nxt_stage = [w for w in scored_ids if stage_of[w] == stage_of[h_id]]
+                    if h_id in nxt_stage:
+                        i = nxt_stage.index(h_id)
+                        nxt = nxt_stage[i + 1] if i + 1 < len(nxt_stage) else h_id
+                        assert start_of[nxt] <= w_start
     # first test window scored: history contains NO test windows at all
     first_test = next(w for w, _ in spy.seen if stage_of[w.window_id] == "test")
     hist_at_first_test = next(h for w, h in spy.seen if w.window_id == first_test.window_id)
@@ -177,6 +194,66 @@ def test_no_test_label_ever_in_history_at_scoring(prepared, tmp_path, monkeypatc
     # cold_start subsample respected
     if mode == "cold_start":
         assert len(spies[0].seen[0][1]) == 10
+
+
+def test_next_window_state_never_crosses_stage_boundary(prepared, tmp_path, monkeypatch):
+    """Regression: rolling + next_window_state must label the last val window with
+    its OWN label when it enters history during test scoring — never with the
+    first test window's label (cross-stage leak)."""
+    df = pd.read_parquet(prepared)
+    first_test_idx = df[df["stage"] == "test"].sort_values("start").index[0]
+    df.loc[first_test_idx, "label"] = "attack"  # distinct from the (normal) val labels
+    first_test = str(df.loc[first_test_idx, "window_id"])
+    p = tmp_path / "w.parquet"
+    df.to_parquet(p, index=False)
+
+    spies = []
+
+    class SpyEngine(MockEngine):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.seen = []
+
+        def _score_impl(self, window):
+            self.seen.append((window, [(h[0].window_id, h[0].outcome_label) for h in self._history]))
+            return super()._score_impl(window)
+
+    def factory(engine_cfg):
+        s = SpyEngine(**engine_cfg["params"])
+        spies.append(s)
+        return s
+
+    monkeypatch.setattr("water_gte_eval.engine_run.make_engine", factory)
+    cfg = _write_cfg(tmp_path, p, tmp_path / "runs", modes=["rolling"], outcome="next_window_state")
+    run_engine_eval(cfg)
+
+    wdf = pd.read_parquet(p)
+    label_of = dict(zip(wdf["window_id"], wdf["label"]))
+    stage_of = dict(zip(wdf["window_id"], wdf["stage"]))
+    start_of = dict(zip(wdf["window_id"], pd.to_datetime(wdf["start"])))
+    last_val = max((w for w in wdf["window_id"] if stage_of[w] == "val"), key=lambda w: start_of[w])
+    assert label_of[last_val] != label_of[first_test]
+    leaked = []
+    for window, history in spies[0].seen:
+        if stage_of[window.window_id] != "test":
+            continue
+        for h_id, h_label in history:
+            if h_id == last_val and h_label != label_of[last_val]:
+                leaked.append((window.window_id, h_id, h_label))
+    assert not leaked, f"cross-stage next_window_state leaked a test label into history: {leaked}"
+
+
+def test_eval_enforces_leakage_check_on_windows_file(prepared, tmp_path):
+    from water_gte_eval.data import LeakageError
+
+    df = pd.read_parquet(prepared)
+    # tamper: move one val window into train -> time overlap / shared event across stages
+    idx = df.index[df["stage"] == "val"][0]
+    df.loc[idx, "stage"] = "train"
+    bad = tmp_path / "leaky_windows.parquet"
+    df.to_parquet(bad, index=False)
+    with pytest.raises(LeakageError):
+        run_engine_eval(_write_cfg(tmp_path, bad, tmp_path / "runs"))
 
 
 def test_missing_windows_path_error(tmp_path):
