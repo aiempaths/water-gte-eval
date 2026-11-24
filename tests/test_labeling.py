@@ -88,3 +88,15 @@ def test_derive_intervals_from_label_runs():
 def test_missing_interval_columns_rejected():
     with pytest.raises(ValueError, match="event_id"):
         label_windows(_windows(24, 12, 12), pd.DataFrame({"start": [], "end": [], "label": []}))
+
+
+def test_derive_intervals_sentinels_are_missing():
+    idx = pd.date_range("2024-01-01", periods=24, freq="1h")
+    lab = np.zeros(24, dtype=int)
+    lab[5:10] = -999          # sentinel "missing" inside what would be a run
+    lab[12:16] = 1
+    df = pd.DataFrame({"a": np.arange(24.0), "attack": lab}, index=idx)
+    iv = derive_intervals(df, "attack", label_map={"0": "normal", "1": "attack"},
+                          sentinels=[-999])
+    assert len(iv) == 1 and iv.iloc[0]["label"] == "attack"  # sentinel run produced no interval
+    assert iv.iloc[0]["start"] == idx[12]

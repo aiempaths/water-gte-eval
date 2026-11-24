@@ -47,6 +47,8 @@ def run_ingest(config_path: str | Path) -> Path:
         for fname, (df, schema) in loaded.items():
             stem = Path(fname).stem
             out_name = f"{cfg['name']}__{stem}"
+            for lc, counts in schema.label_value_counts.items():
+                print(f"  {fname}: label column {lc!r} unique values: {counts}")
             frames[out_name] = (df, {
                 "source_file": fname,
                 "source_sha256": file_sha256(_resolve(src["path"]) / fname),

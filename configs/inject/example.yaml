@@ -39,9 +39,10 @@ sweep:
   start: "2024-01-02T08:00:00"
   end: "2024-01-02T16:00:00"
   severities: [0.05, 0.1, 0.2, 0.4, 0.8, 1.5, 3.0]
-  detector: simple_knn_trust
-  detector_params: {k: 5}
-  flag_quantile: 0.95        # threshold = 95th percentile of clean-window scores
+  detectors: [simple_knn_trust, zscore]   # baselines as sweep detectors
+  detector_params: {simple_knn_trust: {k: 5}}
+  engine: {type: mock, params: {k: 5, closeness_max: 2.0, agreement_min: 0.6}}  # engine joins the sweep too
+  flag_quantile: 0.95        # threshold = 95th percentile of clean-window scores (rank-normalized)
   min_detected_windows: 1
   label: fault
 

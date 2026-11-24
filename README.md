@@ -265,6 +265,28 @@ neighbors and plots. The report ends with a plain-language **claims supported /
 not supported** section stating the number of independent events and refusing
 conclusions the sample size can't carry (configurable `min_events_for_claims`).
 
+## Standing decisions (user-approved)
+
+- Guard-band windows stay `stage="dropped"`; the canonical experiment runner is
+  `eval` (sample-based windows); the legacy Prompt-1 `run` command remains for
+  backward compatibility.
+- Autoencoder = sklearn MLPRegressor (no PyTorch). Thresholds: val-best-F1 is
+  secondary; PRIMARY comparison = fixed review budgets 5/10/20% applied
+  identically to engine and baselines (rank-based, threshold-free).
+- Engine and baselines are ranked side by side in the report; the engine also
+  joins severity sweeps (`sweep.engine` in inject configs).
+- `outcome: next_window_state` stays WITHIN a stage — crossing into the next
+  stage would leak val/test labels into train history (documented in
+  engine_run.py).
+- Report scores are rank-normalized on val (common [0,1] scale); the engine's
+  closeness, agreement, and combined score are reported separately (components
+  table). The report's val section is marked "thresholds were fit here; NOT
+  evidence"; test is the only source of claims.
+- Injection stays sample-level. BATADAL label inspection: ingest prints and
+  records unique label values per detected label column (`label_value_counts` in
+  the manifest); `source.label_sentinels` lists raw values treated as MISSING
+  (never produce intervals).
+
 ## Layout
 
 ```

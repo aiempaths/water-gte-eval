@@ -122,3 +122,18 @@ def test_bootstrap_over_events_resamples_events_not_windows():
     # None handling
     b3 = bootstrap_over_events(df, lambda s: None, n_resamples=10, seed=1, ci=0.95)
     assert b3["mean"] is None and b3["n_dropped"] == 10
+
+
+def test_rank_normalize_on_val_hand_computed():
+    from water_gte_eval.report_metrics import rank_normalize_on_val
+    val = [1.0, 2.0, 3.0]
+    # score 0 -> below all val -> 0/3; 1 -> tie -> (1+0.5)/3; 4 -> above all -> 1
+    out = rank_normalize_on_val(val, [0.0, 1.0, 2.0, 3.0, 4.0])
+    # v=[1,2,3]: s=0 -> 0/3; s=1 -> tie (0+1)/2 /3; s=2 -> (1+2)/2 /3; s=3 -> (2+3)/2 /3; s=4 -> 3/3
+    assert out[0] == 0.0
+    assert out[1] == pytest.approx(0.5 / 3)
+    assert out[2] == pytest.approx(1.5 / 3)
+    assert out[3] == pytest.approx(2.5 / 3)
+    assert out[4] == pytest.approx(1.0)
+    with pytest.raises(ValueError):
+        rank_normalize_on_val([], [1.0])

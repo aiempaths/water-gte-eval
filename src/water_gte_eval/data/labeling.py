@@ -29,17 +29,22 @@ def derive_intervals(
     label_col: str,
     label_map: dict | None = None,
     default_label: str = "normal",
+    sentinels: list | None = None,
 ) -> pd.DataFrame:
     """Derive labeled intervals from contiguous runs of a sample-level label
-    column. Runs equal to default_label are background and get no interval."""
+    column. Runs equal to default_label are background and get no interval.
+    sentinels: raw label values (e.g. -1, -999, "") that mean MISSING — they are
+    mapped to default_label (background) and never produce intervals."""
     if label_col not in df.columns:
         raise ValueError(
             f"label column {label_col!r} not in frame; columns: {list(df.columns)}"
         )
+    sent = {str(x) for x in (sentinels or [])}
     s = df[label_col]
     if label_map:
         norm = {str(k): v for k, v in label_map.items()}
         s = s.map(lambda v: norm.get(str(v), default_label if pd.isna(v) else v))
+    s = s.map(lambda v: default_label if (pd.isna(v) or str(v) in sent) else v)
     s = s.fillna(default_label).astype(str)
     idx = df.index
     step = pd.Series(idx).diff().dropna().median() if len(idx) >= 2 else pd.Timedelta(0)

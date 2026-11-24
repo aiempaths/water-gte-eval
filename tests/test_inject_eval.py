@@ -59,7 +59,7 @@ def test_inject_demo_outputs(clean_path, tmp_path):
     assert list(iv["fault"]) == ["stuck_sensor", "demand_surge"]
 
     summary = json.loads((out_dir / "inject_demo.json").read_text())
-    assert summary["detector"] == "simple_knn_trust"
+    assert "simple_knn_trust" in summary["detectors"]
     curve = summary["sweep"]["curve"]
     assert [c["severity"] for c in curve] == [0.1, 0.5, 2.0]
     for c in curve:
@@ -87,3 +87,29 @@ def test_inject_demo_missing_clean_file(tmp_path):
     cfg = _write_cfg(tmp_path, tmp_path / "nope.parquet", tmp_path / "r")
     with pytest.raises(InjectDemoConfigError, match="clean_path not found"):
         run_inject_demo(cfg)
+
+
+def test_sweep_includes_engine_detector(clean_path, tmp_path):
+    cfg = {
+        "name": "demo", "seed": 42, "clean_path": str(clean_path),
+        "window": {"length": 12, "stride": 6},
+        "labeling": {"min_overlap_frac": 0.5, "lag": "1h"},
+        "injections": [{"fault": "stuck_sensor", "start": "2024-01-01T06:00:00",
+                        "end": "2024-01-01T12:00:00", "severity": 1.0,
+                        "tags": ["demand_flow"], "label": "fault"}],
+        "sweep": {"fault": "additive_drift", "tags": ["tank_level"],
+                  "start": "2024-01-01T12:00:00", "end": "2024-01-01T20:00:00",
+                  "severities": [0.1, 1.0], "detectors": ["simple_knn_trust"],
+                  "detector_params": {"simple_knn_trust": {"k": 5}},
+                  "engine": {"type": "mock", "params": {"k": 5}},
+                  "flag_quantile": 0.95, "min_detected_windows": 1, "label": "fault"},
+        "output": {"dir": str(tmp_path / "rep")},
+    }
+    p = tmp_path / "inject2.yaml"
+    p.write_text(yaml.safe_dump(cfg))
+    out = run_inject_demo(p)
+    sc = json.loads((out / "severity_curve.json").read_text())
+    assert set(sc["detectors"]) == {"simple_knn_trust", "engine"}
+    assert len(sc["detectors"]["engine"]) == 2  # one point per severity
+    assert sc["curve"] == sc["detectors"]["simple_knn_trust"]  # back-compat primary curve
+    assert (out / "severity_curve.png").is_file()

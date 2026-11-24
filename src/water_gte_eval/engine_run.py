@@ -163,8 +163,10 @@ def _load_or_build_windows(cfg: dict) -> tuple[list[Window], str]:
 
 def _outcome_fn(outcome: str, positive: str):
     """Map a window to the history outcome label. next_window_state uses the NEXT
-    window (by window_id order) in the same list; the last one falls back to its
-    own label. Keyed by window_id (Window contains ndarrays, not eq-comparable)."""
+    window (by window_id order) in the SAME STAGE list only; the last one falls
+    back to its own label. Crossing into the next stage is deliberately NOT done:
+    that would let val/test labels leak into train history. Keyed by window_id
+    (Window contains ndarrays, not eq-comparable)."""
     def fn(w: Window, windows_list: list[Window]) -> str:
         if outcome == "fault_type":
             return w.label

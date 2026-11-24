@@ -103,3 +103,26 @@ def test_claims_refuse_when_too_few_events(run_dir, tmp_path):
     md = (out / "report.md").read_text()
     assert "Not supported (refused)" in md
     assert "only" in md and "independent event" in md  # refuses method-comparison claims
+
+
+def test_report_val_section_and_components(run_dir, tmp_path):
+    out = build_report(run_dir, _report_cfg(tmp_path))
+    md = (out / "report.md").read_text()
+    assert "NOT evidence" in md and "Val split" in md
+    assert "only source of claims" in md or "only source of claims" in md.lower() or "**test**" in md
+    mj = json.loads((out / "metrics.json").read_text())
+    eng = mj["methods"]["engine__frozen"]
+    assert "val" in eng and "auroc" in eng["val"]          # val metrics present, marked
+    assert set(eng["components"]) == {"closeness_auroc", "one_minus_agreement_auroc",
+                                      "combined_ranknorm_auroc"}
+    # engine + baselines ranked side by side in the methods table
+    for m in ("engine__frozen", "engine__rolling", "baseline__zscore", "baseline__simple_knn_trust"):
+        assert m in mj["methods"]
+
+
+def test_report_batadal_config_loads():
+    from water_gte_eval.report import load_report_config
+    import pathlib
+    cfg = load_report_config(pathlib.Path("configs/report/batadal.yaml"))
+    assert cfg["positive_labels"] == ["attack"]
+    assert cfg["budgets"] == [0.05, 0.10, 0.20]

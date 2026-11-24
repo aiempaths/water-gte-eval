@@ -25,10 +25,12 @@ import pandas as pd
 import yaml
 
 from gte_eval.baselines import make_baseline
+from gte_eval.engine_adapter import HistoryWindow, make_engine
 from gte_eval.inject import inject_scenario, severity_sweep
 
 from .data import TelemetryColumns, build_sample_windows, label_windows
 from .metrics import build_event_records
+from .report_metrics import rank_normalize_on_val
 
 
 class InjectDemoConfigError(Exception):
@@ -132,46 +134,76 @@ def run_inject_demo(config_path: str | Path) -> Path:
         columns=["event_id", "start", "end", "label", "fault", "severity", "tags"])
     intervals_all.to_parquet(out_dir / "injected_intervals.parquet", index=False)
 
-    # 2. severity sweep with a detector fit on clean windows
+    # 2. severity sweep: baselines AND (optionally) the engine as detectors,
+    #    all fit on clean windows; scores rank-normalized on the clean reference
     sw = cfg["sweep"]
     severities = [float(s) for s in sw["severities"]]
-    detector_name = sw.get("detector", "simple_knn_trust")
-    detector = make_baseline({"name": detector_name, "seed": seed,
-                              "params": sw.get("detector_params", {})})
+    det_names = list(sw.get("detectors") or ([sw["detector"]] if sw.get("detector") else ["simple_knn_trust"]))
+    engine_cfg = sw.get("engine")  # optional {type: mock, params: {...}}
+    q = float(sw.get("flag_quantile", 0.95))
+    min_det = int(sw.get("min_detected_windows", 1))
+
     clean_windows = build_sample_windows(clean, tcols, wlen, wstride)
     clean_adapter = [w.to_adapter() for w in clean_windows]
-    detector.fit(clean_adapter, ["normal"] * len(clean_windows))
-    clean_scores = np.array(detector.score_windows(clean_adapter))
-    q = float(sw.get("flag_quantile", 0.95))
-    threshold = float(np.quantile(clean_scores, q))
-    min_det = int(sw.get("min_detected_windows", 1))
+
+    def make_scorer(name):
+        if name == "engine":
+            eng = make_engine(engine_cfg or {"type": "mock", "params": {}})
+            eng.reset_history()
+            eng.add_history([
+                HistoryWindow(window_id=a.window_id, timestamps=list(a.timestamps),
+                              sensors={k: list(v) for k, v in a.sensors.items()},
+                              outcome_label="normal")
+                for a in clean_adapter
+            ])
+            def score(ws):
+                out = []
+                for w in ws:
+                    r = eng.score(w.to_adapter())
+                    out.append(float(r.closeness) + (1.0 - float(r.agreement)))
+                return out
+            return score
+        b = make_baseline({"name": name, "seed": seed,
+                           "params": (sw.get("detector_params") or {}).get(name, {})})
+        b.fit(clean_adapter, ["normal"] * len(clean_windows))
+        return lambda ws: b.score_windows([w.to_adapter() for w in ws])
+
+    all_names = list(det_names) + (["engine"] if engine_cfg else [])
+    scorers = {name: make_scorer(name) for name in all_names}
+    clean_raw = {name: np.array(scorers[name](clean_windows), dtype=float) for name in all_names}
+    clean_norm = {name: rank_normalize_on_val(clean_raw[name], clean_raw[name]) for name in all_names}
+    thresholds = {name: float(np.quantile(clean_norm[name], q)) for name in all_names}
 
     sweep = severity_sweep(clean, sw["fault"], sw["start"], sw["end"], severities,
                            tags=sw.get("tags"), label=sw.get("label"), seed=seed,
                            params=sw.get("params"))
-    curve = []
+    curves: dict[str, list] = {name: [] for name in all_names}
     for sev in severities:
         mod, intervals = sweep[sev]
         windows = build_sample_windows(mod, tcols, wlen, wstride)
         label_windows(windows, intervals, min_overlap_frac=min_frac, lag=lag)
-        scores = np.array(detector.score_windows([w.to_adapter() for w in windows]))
-        flags = {w.window_id: bool(s >= threshold) for w, s in zip(windows, scores)}
-        records = build_event_records(windows, flags, intervals.iloc[0]["label"], min_det)
-        detected = sum(1 for r in records if r.detected)
-        n_flagged = sum(flags.values())
-        curve.append({"severity": sev, "detected_events": detected,
-                      "n_events": len(records), "event_recall": detected / len(records) if records else 0.0,
-                      "n_windows_flagged": n_flagged, "n_windows": len(windows)})
-        print(f"sweep {sw['fault']} sev={sev}: event_recall={curve[-1]['event_recall']:.2f} "
-              f"(flagged {n_flagged}/{len(windows)} windows, threshold={threshold:.4g})")
+        for name in all_names:
+            raw = np.array(scorers[name](windows), dtype=float)
+            scores = rank_normalize_on_val(clean_raw[name], raw)
+            flags = {w.window_id: bool(s >= thresholds[name]) for w, s in zip(windows, scores)}
+            records = build_event_records(windows, flags, intervals.iloc[0]["label"], min_det)
+            detected = sum(1 for r in records if r.detected)
+            curves[name].append({"severity": sev, "detected_events": detected,
+                                 "n_events": len(records),
+                                 "event_recall": detected / len(records) if records else 0.0,
+                                 "n_windows_flagged": sum(flags.values()), "n_windows": len(windows)})
+        print(f"sweep {sw['fault']} sev={sev}: " + "  ".join(
+            f"{name} recall={curves[name][-1]['event_recall']:.2f}" for name in all_names))
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
-    ax.plot([c["severity"] for c in curve], [c["event_recall"] for c in curve],
-            marker="o", color="tab:red")
+    for name in all_names:
+        ax.plot([c["severity"] for c in curves[name]], [c["event_recall"] for c in curves[name]],
+                marker="o", label=name)
     ax.set_xlabel(f"severity of {sw['fault']}")
     ax.set_ylabel("event recall (detected injected intervals)")
     ax.set_ylim(-0.05, 1.05)
-    ax.set_title(f"detection curve — detector={detector_name}, threshold=q{q} of clean scores")
+    ax.set_title(f"detection curves — detectors fit on clean windows, threshold=q{q} of clean scores")
+    ax.legend()
     ax.grid(alpha=0.3)
     fig.tight_layout()
     fig.savefig(out_dir / "severity_curve.png", dpi=110)
@@ -181,17 +213,18 @@ def run_inject_demo(config_path: str | Path) -> Path:
         "name": cfg["name"],
         "seed": seed,
         "clean_path": str(clean_path),
-        "detector": detector_name,
-        "flag_threshold": threshold,
+        "detectors": all_names,
+        "flag_thresholds": thresholds,
         "flag_quantile": q,
         "window": {"length": wlen, "stride": wstride},
         "sweep": {"fault": sw["fault"], "start": str(sw["start"]), "end": str(sw["end"]),
-                  "curve": curve},
+                  "curve": curves[all_names[0]], "detectors": curves},
         "example_injections": all_intervals and pd.concat(all_intervals).to_dict("records"),
         "outputs": sorted(p.name for p in out_dir.iterdir()),
     }
     (out_dir / "inject_demo.json").write_text(_dump(summary), encoding="utf-8")
-    (out_dir / "severity_curve.json").write_text(_dump({"fault": sw["fault"], "curve": curve}),
-                                                 encoding="utf-8")
+    (out_dir / "severity_curve.json").write_text(
+        _dump({"fault": sw["fault"], "curve": curves[all_names[0]], "detectors": curves}),
+        encoding="utf-8")
     print(f"report dir: {out_dir}")
     return out_dir

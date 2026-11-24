@@ -173,3 +173,17 @@ def method_scores(df: pd.DataFrame, method: str) -> tuple[np.ndarray, np.ndarray
         s = df[method].astype(float)
     y = df["y"].to_numpy(dtype=int)
     return s.to_numpy(), y
+
+
+def rank_normalize_on_val(val_scores, scores) -> np.ndarray:
+    """Map scores to [0, 1] via the empirical CDF of the VAL scores: the fraction
+    of val scores below each score (half weight for ties). Deterministic.
+    Used so the engine's combined score (and baseline scores) are on a common
+    val-referenced scale — raw closeness + (1 - agreement) mixes scales."""
+    v = np.sort(np.asarray(val_scores, dtype=float))
+    s = np.asarray(scores, dtype=float)
+    if v.size == 0:
+        raise ValueError("val_scores is empty; cannot rank-normalize")
+    lo = np.searchsorted(v, s, side="left")
+    hi = np.searchsorted(v, s, side="right")
+    return (lo + (hi - lo) / 2.0) / v.size

@@ -61,6 +61,9 @@ def load_prepare_config(path: str | Path) -> dict:
            "source.path must be a non-empty string (parquet file or directory)")
     if src.get("tag_columns") is not None:
         _check(isinstance(src["tag_columns"], list), "source.tag_columns must be a list or null")
+    if src.get("label_sentinels") is not None:
+        _check(isinstance(src["label_sentinels"], list),
+               "source.label_sentinels must be a list of raw label values treated as MISSING")
     win = raw.get("window")
     _check(isinstance(win, dict), "'window' must be a mapping")
     _check(isinstance(win.get("length"), int) and win["length"] >= 1, "window.length must be an int >= 1")
@@ -141,6 +144,7 @@ def _prepare_one(df: pd.DataFrame, cfg: dict, intervals: pd.DataFrame | None, sr
             df, label_col,
             label_map=src.get("label_map"),
             default_label=src.get("default_label", "normal"),
+            sentinels=src.get("label_sentinels"),
         )
 
     lab = cfg.get("labeling", {})

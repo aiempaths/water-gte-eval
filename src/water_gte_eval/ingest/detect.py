@@ -30,6 +30,7 @@ class DetectedSchema:
     tag_columns: list[str]
     label_columns: list[str]
     n_rows: int
+    label_value_counts: dict = field(default_factory=dict)  # label col -> {value: count} (capped)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -43,6 +44,7 @@ class DetectedSchema:
             "tag_columns": self.tag_columns,
             "label_columns": self.label_columns,
             "n_rows": self.n_rows,
+            "label_value_counts": {k: dict(v) for k, v in self.label_value_counts.items()},
             "notes": list(self.notes),
         }
 
@@ -181,6 +183,12 @@ def detect_schema(path: str | Path, sample_rows: int = 500) -> DetectedSchema:
             "no timestamp column detected (datetime-string or epoch); "
             "set source.overrides.timestamp_column in the ingest config"
         )
+    label_value_counts = {}
+    for c in label_columns:
+        vc = df[c].astype(str).value_counts()
+        label_value_counts[c] = {str(k): int(v) for k, v in vc.head(50).items()}
+        if len(vc) > 50:
+            notes.append(f"label column {c!r} has {len(vc)} unique values; showing top 50")
     return DetectedSchema(
         file=p.name,
         delimiter=delimiter,
@@ -191,6 +199,7 @@ def detect_schema(path: str | Path, sample_rows: int = 500) -> DetectedSchema:
         tag_columns=tag_columns,
         label_columns=label_columns,
         n_rows=int(len(df)),
+        label_value_counts=label_value_counts,
         notes=notes,
     )
 

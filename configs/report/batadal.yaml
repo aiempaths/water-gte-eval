@@ -1,0 +1,15 @@
+# Report config for real BATADAL runs (attack/normal labels).
+#   python -m water_gte_eval report runs/<config_hash>/ --config configs/report/batadal.yaml
+bootstrap_n: 1000
+ci: 0.95
+seed: 42
+budgets: [0.05, 0.10, 0.20]        # PRIMARY comparison, applied identically to engine + baselines
+positive_labels: [attack]          # BATADAL: attack vs normal
+discrimination_labels: [attack, process_change]  # used when those labels are present
+split: test                        # test is the only source of claims; val section is marked not-evidence
+include_val_section: true
+min_detected_windows: 1
+failures_top_k: 5
+min_events_for_claims: 5
+windows_path: data/processed/batadal__<scenario>_windows.parquet   # optional, for failure tag plots
+output_dir: reports

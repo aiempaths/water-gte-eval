@@ -76,3 +76,11 @@ def test_dir_loader_adds_source_file_and_missing_dir_message(tmp_path):
         load_batadal_dir(empty)
     msg = str(exc.value)
     assert "Place the raw BATADAL" in msg and str(empty) in msg
+
+
+def test_label_value_counts_recorded(tmp_path):
+    f = tmp_path / "scen.csv"
+    _write_csv(f)
+    schema = detect_schema(f)
+    assert schema.label_value_counts["attack"] == {"0": 12, "1": 12}
+    assert "label_value_counts" in schema.to_dict()
