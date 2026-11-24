@@ -12,16 +12,34 @@ is a FastAPI fake of the API for testing `HttpEngine`. Plug in the real engine b
 implementing `EngineAdapter` and registering it in
 `gte_eval/engine_adapter/registry.py`.
 
-## Quickstart
+## Quickstart — clone to report in 5 commands (MockEngine, synthetic data)
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[test]"   # [test] adds fastapi+uvicorn for the fake server
-.venv/bin/python -m water_gte_eval make-example-data        # synthetic example data (NOT real plant data)
-.venv/bin/python -m water_gte_eval run configs/example_mock.yaml
-.venv/bin/python -m pytest                                  # test suite
+python3 -m venv .venv && .venv/bin/pip install -e ".[test]"          # 1  ([test] adds fastapi+uvicorn for the fake server)
+.venv/bin/python -m water_gte_eval make-example-processed             # 2  synthetic data (NOT real plant data)
+.venv/bin/python -m water_gte_eval prepare configs/prepare/example.yaml   # 3  windows + labels + splits + leakage check
+.venv/bin/python -m water_gte_eval eval configs/run/example.yaml      # 4  engine+baselines -> runs/<config_hash>/ (prints the hash)
+.venv/bin/python -m water_gte_eval report runs/<config_hash>/ --config configs/report/default.yaml   # 5  -> reports/<config_hash>/report.md + PNGs
 ```
 
 All commands run from the repo root; relative paths in configs resolve against it.
+`eval` prints `run dir: runs/<config_hash>/` — use that hash in command 5.
+Extras: `.venv/bin/python -m pytest` (test suite), and the Docker image below.
+
+### Docker (pinned)
+
+```bash
+docker build -t water-gte-eval .          # deps fully pinned in requirements-lock.txt
+# run the 5 quickstart commands inside the container, mounting a host dir for outputs, e.g.:
+docker run --rm -v "$PWD/out:/app/out" -w /app water-gte-eval make-example-processed --out out/processed_demo
+# (configs in the image point at examples/...; for host outputs, generate data into a mounted dir
+#  and copy configs, or bind-mount the repo:  docker run --rm -v "$PWD:/app" -w /app water-gte-eval ...)
+```
+
+The image build runs the CLI `--help` and a pytest collect as a smoke check. (The sandbox this
+repo was developed in has no Docker daemon, so the build itself was verified equivalent via a
+clean venv installed from `requirements-lock.txt` + `pip install --no-deps -e .`, running the 5
+quickstart commands above — all pass.)
 
 ## Hard rules implemented here
 
@@ -265,6 +283,28 @@ neighbors and plots. The report ends with a plain-language **claims supported /
 not supported** section stating the number of independent events and refusing
 conclusions the sample size can't carry (configurable `min_events_for_claims`).
 
+## Engine-specific checks (sweeps, robustness, tamper audit)
+
+```bash
+python -m water_gte_eval sweeps configs/sweeps/example.yaml       # k / window length / history size -> reports/sweeps/<hash>/sweep.md (event-bootstrap CIs)
+python -m water_gte_eval robustness configs/robustness/example.yaml  # sensor dropout / clock skew / poisoned history vs clean -> reports/robustness/<hash>/robustness.md
+python -m water_gte_eval audit-chain runs/<config_hash>/         # re-derive every receipt in results.parquet; exits 1 and names the row if tampered
+```
+
+- `sweeps`: one command runs one full `eval` per sweep point (variant configs written to
+  `variants/*.yaml`, run dirs under `runs/<hash>/`); each point is a table row with
+  event-bootstrapped CIs (same metric code as `report`).
+- `robustness`: window-level perturbations (`sensor_dropout`, `clock_skew`; seeded, scope
+  `scored`|`all`) and `poison_history_frac` (train attack windows mislabeled `normal` in the
+  engine history only) — reports AUROC/event-detection degradation vs the clean run with CIs.
+- `audit-chain`: `audit.verify_run_receipts()` re-derives every engine receipt in
+  `results.parquet` from the run's windows and the sha256 chain contract; a modified row fails
+  and is identified by mode, chain position, and window_id (adapter-level:
+  `adapter.find_chain_breaks()`).
+- The report ranks engine vs `simple_knn_trust` side by side in an **Ablation** section with a
+  paired event-bootstrap CI on ΔAUROC; when the engine is `MockEngine` the section is labeled
+  "MOCK ENGINE — NOT evidence".
+
 ## Standing decisions (user-approved)
 
 - Guard-band windows stay `stage="dropped"`; the canonical experiment runner is
@@ -292,7 +332,10 @@ conclusions the sample size can't carry (configurable `min_events_for_claims`).
 ```
 configs/    experiment + ingest + prepare + baselines + sim + inject + run + report configs, tags.yaml
 data/       raw/ (place BATADAL/SWaT files here), processed/ (generated parquet + manifest.json)
-docs/       engine_contract.md (exact JSON/HTTP/receipt contract)
+docs/       engine_contract.md (JSON/HTTP/receipt contract + samples), datasets.md,
+            methodology.md (leakage protections, threshold policy, limitations),
+            adding_a_baseline.md, adding_a_dataset.md
+Dockerfile + requirements-lock.txt   pinned reproducible image
 examples/   synthetic example-data generators (NOT real plant data)
 src/gte_eval/engine_adapter/   EngineAdapter, MockEngine, HttpEngine, registry (Prompt 2)
 src/gte_eval/baselines/        common Baseline interface + 6 baselines + registry
@@ -313,7 +356,12 @@ src/water_gte_eval/
   metrics/             window-level, event-level, bootstrap CIs
   runner.py            one config -> runs/<config_hash>/
   cli.py               python -m water_gte_eval {run, ingest, prepare, baselines, eval,
-                       report, sim-wntr, sim-toy, inject-demo, make-example-*}
+                       report, sweeps, robustness, audit-chain, sim-wntr, sim-toy,
+                       inject-demo, make-example-*}
+  sweep_eval.py        sweeps: one command over k/window_length/history_size -> tables + CIs
+  robustness.py        robustness: dropout/skew/poisoned history -> degradation report
+  perturb.py           seeded window-level perturbations (sensor_dropout, clock_skew)
+  audit.py             verify_run_receipts: re-derive all receipts in a run dir, name tampered rows
 reports/               generated reports + inject-demo figures
 tests/                 pytest suite: engine contract tests (any adapter), fake FastAPI
                        server, ingest tests (gaps/duplicates/unit-less/flatline), e2e determinism

@@ -1,0 +1,14 @@
+.venv
+.git
+__pycache__
+*.pyc
+.pytest_cache
+runs
+reports
+examples
+out
+data/processed
+temp.inp
+temp.rpt
+temp.bin
+*.egg-info

@@ -77,6 +77,23 @@ Configured under `engine.params` for `type: http` (see `configs/example_http.yam
 - `timeout_s` (per attempt), `retries` (total attempts), `backoff_s` (linear backoff
   `backoff_s * attempt` between attempts).
 
+Sample request/response with the default (PLACEHOLDER) names:
+
+```json
+POST /score
+{"window": {"window_id": "w00042",
+            "timestamps": ["2024-06-01T00:00:00", "2024-06-01T00:05:00"],
+            "sensors": {"flow": [120.1, 119.8], "pressure": [3.21, 3.20]}}}
+
+200 OK
+{"window_id": "w00042", "closeness": 0.31, "agreement": 1.0,
+ "verdict": "trust", "neighbor_ids": ["w00007", "w00011", "w00019"],
+ "receipt": "9f2c…64hex"}
+```
+
+(With `score_wrapper`/`history_wrapper` set differently, the request key changes
+accordingly — e.g. `{"data": {...}}` if `score_wrapper: data`.)
+
 Error behavior of `HttpEngine`:
 - Connection error / timeout on every attempt → `EngineUnavailableError`:
   `engine API unreachable at <url> after N attempt(s) (timeout=Ts): <cause>`.
