@@ -189,11 +189,21 @@ class EngineAdapter(ABC):
                 return compute_receipt(prev, window, result_outputs(result)) == result.receipt
         return False
 
-    def verify_chain(self) -> bool:
-        """True iff every logged receipt re-derives correctly from GENESIS."""
+    def find_chain_breaks(self) -> list[int]:
+        """Indices of logged entries whose receipt does not re-derive from the
+        previous entry's stored receipt. The FIRST break identifies the tampered
+        row: altering a logged output fails exactly that entry, while altering a
+        stored receipt field fails that entry and (because the chain links on the
+        stored value) every later entry as well."""
+        breaks: list[int] = []
         prev = GENESIS
-        for window, result in self._log:
+        for i, (window, result) in enumerate(self._log):
             if compute_receipt(prev, window, result_outputs(result)) != result.receipt:
-                return False
+                breaks.append(i)
             prev = result.receipt
-        return True
+        return breaks
+
+    def verify_chain(self) -> bool:
+        """True iff every logged receipt re-derives correctly from GENESIS.
+        Use find_chain_breaks() to locate a tampered row."""
+        return not self.find_chain_breaks()

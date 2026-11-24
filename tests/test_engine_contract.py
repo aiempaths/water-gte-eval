@@ -129,6 +129,32 @@ def test_receipt_tamper_detection(adapter_factory):
     assert not a.verify_chain(), "altered log entry not detected by verify_chain"
 
 
+def test_chain_break_identifies_tampered_row(adapter_factory):
+    a = adapter_factory()
+    a.reset_history()
+    a.add_history(HISTORY)
+    for i in range(4):
+        a.score(make_window(i, 1.0 + 0.2 * i))
+    assert a.verify_chain()
+    assert a.find_chain_breaks() == []
+    # tamper a logged OUTPUT field -> exactly that row is identified
+    w2, r2 = a.log[2]
+    a.log[2] = (w2, dataclasses.replace(r2, closeness=r2.closeness + 0.5))
+    breaks = a.find_chain_breaks()
+    assert breaks[0] == 2, f"first break must identify the tampered row, got {breaks}"
+    assert not a.verify_chain()
+    # tamper a stored RECEIPT field -> that row breaks first (later rows may cascade)
+    b = adapter_factory()
+    b.reset_history()
+    b.add_history(HISTORY)
+    for i in range(4):
+        b.score(make_window(i, 1.0 + 0.2 * i))
+    w1, r1 = b.log[1]
+    b.log[1] = (w1, dataclasses.replace(r1, receipt="0" * 64))
+    breaks2 = b.find_chain_breaks()
+    assert breaks2[0] == 1, f"first break must identify the tampered row, got {breaks2}"
+
+
 def test_result_shape_latency_and_health(adapter_factory):
     a = adapter_factory()
     a.reset_history()

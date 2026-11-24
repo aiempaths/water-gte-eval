@@ -14,6 +14,7 @@ from pathlib import Path
 
 import yaml
 
+from .audit import verify_run_receipts
 from .baseline_eval import run_baseline_eval
 from .devdata import generate_example_data, generate_example_processed, generate_example_raw
 from .engine_run import run_engine_eval
@@ -21,7 +22,9 @@ from .ingest import run_ingest
 from .inject_eval import run_inject_demo
 from .prepare import run_prepare
 from .report import build_report
+from .robustness import run_robustness
 from .runner import run_experiment
+from .sweep_eval import run_sweeps
 
 
 def _print_run_summary(out_dir: Path) -> None:
@@ -97,6 +100,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     rp.add_argument("run_dir", help="run dir containing results.parquet (runs/<config_hash>/)")
     rp.add_argument("--config", default=None, help="optional report YAML (defaults built-in; see configs/report/default.yaml)")
+    swp = sub.add_parser(
+        "sweeps",
+        help="sweep k / window length / history size: one command, table + CIs -> <output_dir>/<hash>/",
+    )
+    swp.add_argument("config", help="path to a sweep YAML config (configs/sweeps/*.yaml)")
+    rob = sub.add_parser(
+        "robustness",
+        help="sensor dropout / clock skew / poisoned history: degradation vs clean -> <output_dir>/<hash>/",
+    )
+    rob.add_argument("config", help="path to a robustness YAML config (configs/robustness/*.yaml)")
+    au = sub.add_parser(
+        "audit-chain",
+        help="re-derive every receipt in a run dir's results.parquet and report tampered rows",
+    )
+    au.add_argument("run_dir", help="run dir containing results.parquet + config.yaml (runs/<config_hash>/)")
     m3 = sub.add_parser(
         "make-example-processed",
         help="generate a synthetic processed-style parquet for trying `prepare` (NOT real plant data)",
@@ -152,6 +170,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "report":
         build_report(args.run_dir, args.config)
         return 0
+    if args.command == "sweeps":
+        run_sweeps(args.config)
+        return 0
+    if args.command == "robustness":
+        run_robustness(args.config)
+        return 0
+    if args.command == "audit-chain":
+        report = verify_run_receipts(args.run_dir)
+        if report["ok"]:
+            print(f"OK: {report['n_checked']} receipts re-derived cleanly in {args.run_dir}")
+            return 0
+        print(f"TAMPERED: {report['n_breaks']} break(s) in {args.run_dir}:")
+        for b in report["breaks"]:
+            print(f"  mode={b['mode']} position={b['position']} window_id={b['window_id']}")
+        return 1
     return 2
 
 

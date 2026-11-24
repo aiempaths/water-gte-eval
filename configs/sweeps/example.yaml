@@ -1,0 +1,40 @@
+# Sweep driver example: one command sweeps engine k, window length, and history
+# size on the synthetic example data (MockEngine).
+#   python -m water_gte_eval make-example-processed
+#   python -m water_gte_eval sweeps configs/sweeps/example.yaml
+# Artifacts: reports/sweeps/<sweep_hash>/{sweep.md, sweep.json, sweep_<axis>.png, variants/*.yaml}
+# Variant run dirs: runs/<config_hash>/ (one per sweep point).
+name: sweep-example
+seed: 42
+
+# base run config (a full `eval` config body). Inline `prepare:` so the
+# window_length axis can rebuild windows; `windows_path` would fix the length.
+base:
+  name: sweep-example-base
+  seed: 42
+  prepare:
+    source:
+      path: examples/processed_demo/example.parquet
+      label_column: attack
+      label_map: {"0": normal, "1": attack, "2": fault}
+      default_label: normal
+    window: {length: 24, stride: 6}
+    labeling: {min_overlap_frac: 0.5, lag: 2h}
+    split: {val_frac: 0.15, test_frac: 0.15}
+  engine: {type: mock, params: {k: 5, closeness_max: 2.0, agreement_min: 0.6}}
+  modes: [frozen]
+  outcome: attack_normal
+  positive_label: attack
+  baselines: [simple_knn_trust]
+  event_metrics: {min_detected_windows: 1}
+  bootstrap: {unit: events, n_resamples: 200, ci: 0.95, seed: 42}
+  output: {runs_dir: runs}
+
+axes:
+  k: [1, 3, 5, 10, 20]          # engine.params.k
+  window_length: [12, 24, 48]   # prepare.window.length (samples)
+  history_size: [10, 50, 200]   # history.max_size (train history cap, frozen mode)
+
+positive_labels: [attack, fault]   # for the metric tables (test split only)
+runs_dir: runs
+output_dir: reports/sweeps

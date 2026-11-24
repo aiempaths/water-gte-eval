@@ -37,6 +37,7 @@ from .config import config_hash
 from .data import Window
 from .engine import AdapterWindow, HistoryWindow, make_engine
 from .metrics import bootstrap_event_metrics, build_event_records, event_metrics, window_metrics
+from .perturb import PERTURBATIONS, apply_perturbation
 from gte_eval.baselines import REGISTRY, make_baseline
 
 MODES = ("frozen", "rolling", "cold_start")
@@ -75,6 +76,18 @@ def load_run_config(path: str | Path) -> dict:
            f"baselines must be drawn from {sorted(REGISTRY)}")
     out = raw.get("output")
     _check(isinstance(out, dict) and isinstance(out.get("runs_dir"), str), "output.runs_dir required")
+    pert = raw.get("perturb")
+    if pert is not None:
+        _check(isinstance(pert, dict) and pert.get("name") in PERTURBATIONS,
+               f"perturb must be a mapping with name in {PERTURBATIONS}")
+        _check(pert.get("scope", "scored") in ("scored", "all"), "perturb.scope must be 'scored' or 'all'")
+    poison = float(raw.get("poison_history_frac", 0.0))
+    _check(0.0 <= poison <= 1.0, "poison_history_frac must be in [0, 1]")
+    hist = raw.get("history", {})
+    _check(isinstance(hist, dict), "history must be a mapping")
+    if "max_size" in hist:
+        _check(isinstance(hist["max_size"], int) and hist["max_size"] >= 1,
+               "history.max_size must be an int >= 1")
     raw["_path"] = str(p)
     raw["_config_hash"] = config_hash({k: v for k, v in raw.items() if not k.startswith("_")})
     return raw
@@ -190,13 +203,18 @@ def _history_window(w: Window, label: str) -> HistoryWindow:
 # ---------------------------------------------------------------- engine modes
 
 def _run_mode(mode: str, engine_cfg: dict, train: list[Window], scored: list[Window],
-              outcome: str, positive: str, seed: int, cold_n: int) -> dict:
+              outcome: str, positive: str, seed: int, cold_n: int,
+              max_history: int = 0, poison_frac: float = 0.0) -> dict:
     """Score all scored windows (val+test, time order) in one history mode.
 
     History rule: a window enters the engine history only when its end is
     STRICTLY before the scored window's start, and (rolling mode) only after it
     has been scored, with an outcome label that is knowable by then
     (next_window_state waits until the next window has happened).
+    max_history caps the train history size (seeded subsample; cold_start uses
+    cold_start.n_history). poison_frac (attack_normal outcome only) mislabels
+    that fraction of TRAIN attack windows as "normal" in the engine history,
+    simulating a poisoned history. Baselines are NOT poisoned.
     Returns {window_id: {closeness, agreement, verdict, receipt, neighbor_ids,
     latency_ms}}."""
     engine = make_engine(engine_cfg)
@@ -204,10 +222,15 @@ def _run_mode(mode: str, engine_cfg: dict, train: list[Window], scored: list[Win
     outcome_fn = _outcome_fn(outcome, positive)
 
     hist_pool = sorted(train, key=lambda w: (w.start, w.window_id))
-    if mode == "cold_start" and cold_n and len(hist_pool) > cold_n:
+    cap = cold_n if (mode == "cold_start" and cold_n) else max_history
+    if cap and len(hist_pool) > cap:
         rng = np.random.default_rng(seed)
-        keep = sorted(rng.choice(len(hist_pool), size=cold_n, replace=False).tolist())
+        keep = sorted(rng.choice(len(hist_pool), size=cap, replace=False).tolist())
         hist_pool = [hist_pool[i] for i in keep]
+
+    prng = np.random.default_rng(seed + 911)
+    poison_flip = ({w.window_id: bool(prng.random() < poison_frac) for w in hist_pool}
+                   if poison_frac else {})
 
     scored_sorted = sorted(scored, key=lambda w: (w.start, w.window_id))
     scored_ids = [w.window_id for w in scored_sorted]
@@ -231,6 +254,9 @@ def _run_mode(mode: str, engine_cfg: dict, train: list[Window], scored: list[Win
                 label = nxt.label if nxt is not None else h.label
             else:
                 label = outcome_fn(h, train if h.window_id in train_ids else scored_sorted)
+            if (poison_flip.get(h.window_id) and h.window_id in train_ids
+                    and outcome == "attack_normal" and h.label == positive):
+                label = "normal"  # poisoned history: attack window mislabeled normal
             engine.add_history([_history_window(h, label)])
             added.add(h.window_id)
         res = engine.score(w.to_adapter())
@@ -293,7 +319,10 @@ def run_engine_eval(config_path: str | Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     commit = git_commit()
+    seed = int(cfg["seed"])
     windows, windows_sha = _load_or_build_windows(cfg)
+    if cfg.get("perturb"):
+        windows = apply_perturbation(windows, cfg["perturb"], seed)
     by_stage: dict[str, list[Window]] = {}
     for w in windows:
         by_stage.setdefault(w.stage, []).append(w)
@@ -304,8 +333,9 @@ def run_engine_eval(config_path: str | Path) -> Path:
     scored = sorted(val + test, key=lambda w: (w.start, w.window_id))
     positive = cfg.get("positive_label", "attack")
     outcome = cfg.get("outcome", "attack_normal")
-    seed = int(cfg["seed"])
     cold_n = int(cfg.get("cold_start", {}).get("n_history", 0))
+    max_history = int(cfg.get("history", {}).get("max_size", 0))
+    poison_frac = float(cfg.get("poison_history_frac", 0.0))
 
     cache = _ModeCache(out_dir, resume)
 
@@ -318,7 +348,7 @@ def run_engine_eval(config_path: str | Path) -> Path:
             engine_results[mode] = cached
         else:
             engine_results[mode] = _run_mode(mode, cfg["engine"], train, scored, outcome,
-                                             positive, seed, cold_n)
+                                             positive, seed, cold_n, max_history, poison_frac)
             cache.store(key, commit, windows_sha, engine_results[mode])
 
     # baselines on identical windows (fit on train only)
@@ -458,6 +488,9 @@ def run_engine_eval(config_path: str | Path) -> Path:
         "modes": cfg["modes"],
         "outcome": outcome,
         "resume": resume,
+        "history_max_size": max_history or None,
+        "poison_history_frac": poison_frac or None,
+        "perturb": cfg.get("perturb"),
         "cache": {"hits": cache.hits, "computed": cache.misses},
         "n_windows": {"train": len(train), "val": len(val), "test": len(test)},
         "thresholds": thresholds,

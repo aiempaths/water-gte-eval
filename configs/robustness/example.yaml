@@ -1,0 +1,41 @@
+# Robustness driver example: sensor dropout, clock skew, and poisoned history
+# vs a clean run, on the synthetic example data (MockEngine).
+#   python -m water_gte_eval make-example-processed
+#   python -m water_gte_eval robustness configs/robustness/example.yaml
+# Artifacts: reports/robustness/<hash>/{robustness.md, robustness.json,
+#   robustness_degradation.png, variants/*.yaml}
+name: robustness-example
+seed: 42
+
+base:
+  name: robustness-example-base
+  seed: 42
+  prepare:
+    source:
+      path: examples/processed_demo/example.parquet
+      label_column: attack
+      label_map: {"0": normal, "1": attack, "2": fault}
+      default_label: normal
+    window: {length: 24, stride: 6}
+    labeling: {min_overlap_frac: 0.5, lag: 2h}
+    split: {val_frac: 0.15, test_frac: 0.15}
+  engine: {type: mock, params: {k: 5, closeness_max: 2.0, agreement_min: 0.6}}
+  modes: [frozen]
+  outcome: attack_normal
+  positive_label: attack
+  baselines: [simple_knn_trust]
+  event_metrics: {min_detected_windows: 1}
+  bootstrap: {unit: events, n_resamples: 200, ci: 0.95, seed: 42}
+  output: {runs_dir: runs}
+
+# window-level perturbations, applied to scored (val+test) windows only
+perturbations:
+  - {name: sensor_dropout, params: {prob: 0.3, fill: hold_first}, scope: scored}
+  - {name: clock_skew, params: {shift_samples: 2}, scope: scored}
+
+# fraction of TRAIN attack windows mislabeled "normal" in the ENGINE history
+poison_levels: [0.0, 0.3, 0.6]
+
+positive_labels: [attack, fault]
+runs_dir: runs
+output_dir: reports/robustness

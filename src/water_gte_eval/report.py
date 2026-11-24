@@ -95,7 +95,9 @@ def _ci_str(b):
     return f"{b['mean']:.4f} [{b['ci_low']:.4f}, {b['ci_high']:.4f}]"
 
 
-def _method_frame(res: pd.DataFrame, method: str, split: str, positive: set) -> pd.DataFrame:
+def method_frame(res: pd.DataFrame, method: str, split: str, positive: set) -> pd.DataFrame:
+    """Per-window frame for one method on one split: y (positive->1), score_raw,
+    flag, plus engine closeness/agreement components for engine__ methods."""
     if method.startswith("engine__"):
         mode = method.split("__", 1)[1]
         m = res[(res["mode"] == mode) & (res["split"] == split)].drop_duplicates("window_id").copy()
@@ -113,7 +115,8 @@ def _method_frame(res: pd.DataFrame, method: str, split: str, positive: set) -> 
     return m
 
 
-def _compute_metrics(mdf: pd.DataFrame, cfg: dict, t_min, t_max, do_bootstrap: bool = True) -> dict:
+def frame_metrics(mdf: pd.DataFrame, cfg: dict, t_min, t_max, do_bootstrap: bool = True) -> dict:
+    """All report metrics for one method frame (expects a `score` column)."""
     scores, y = mdf["score"].to_numpy(), mdf["y"].to_numpy()
     budgets = [float(b) for b in cfg["budgets"]]
     min_det = int(cfg["min_detected_windows"])
@@ -147,6 +150,34 @@ def _compute_metrics(mdf: pd.DataFrame, cfg: dict, t_min, t_max, do_bootstrap: b
     return m
 
 
+def summarize_run_results(run_dir: str | Path, positive_labels, budgets, bootstrap_n: int,
+                          ci: float, seed: int, split: str = "test",
+                          min_detected_windows: int = 1,
+                          discrimination_labels=("fault", "process_change")) -> dict:
+    """Per-method metrics (with event-bootstrap CIs) for one run dir's
+    results.parquet. Used by the sweep and robustness drivers so they share the
+    exact metric code of the report. Scores are rank-normalized on val, as in
+    build_report."""
+    run_dir = _resolve(run_dir)
+    res = pd.read_parquet(run_dir / "results.parquet")
+    positive = set(positive_labels)
+    methods = _methods(res)
+    cfg = {"budgets": [float(b) for b in budgets], "bootstrap_n": int(bootstrap_n),
+           "ci": float(ci), "seed": int(seed), "min_detected_windows": int(min_detected_windows),
+           "discrimination_labels": list(discrimination_labels)}
+    df_split = res[res["split"] == split]
+    t_min, t_max = df_split["start"].min(), df_split["end"].max()
+    out: dict[str, dict] = {}
+    for method in methods:
+        val_frame = method_frame(res, method, "val", positive)
+        m_frame = method_frame(res, method, split, positive).copy()
+        m_frame["score"] = rank_normalize_on_val(val_frame["score_raw"].to_numpy(),
+                                                 m_frame["score_raw"].to_numpy())
+        out[method] = frame_metrics(m_frame, cfg, t_min, t_max, do_bootstrap=True)
+    return {"run_dir": str(run_dir), "split": split, "methods": out,
+            "n_events": int(df_split.loc[df_split["event_id"].astype(str) != "", "event_id"].nunique())}
+
+
 def build_report(run_dir: str | Path, config_path: str | Path | None = None) -> Path:
     run_dir = _resolve(run_dir)
     results_path = run_dir / "results.parquet"
@@ -175,15 +206,15 @@ def build_report(run_dir: str | Path, config_path: str | Path | None = None) -> 
 
     all_metrics: dict[str, dict] = {}
     for method in methods:
-        val_frame = _method_frame(res, method, "val", positive)
-        test_frame = _method_frame(res, method, split, positive)
+        val_frame = method_frame(res, method, "val", positive)
+        test_frame = method_frame(res, method, split, positive)
         # rank-normalize on val: common [0,1] val-referenced scale for every method
         test_frame = test_frame.copy()
         test_frame["score"] = rank_normalize_on_val(val_frame["score_raw"].to_numpy(),
                                                     test_frame["score_raw"].to_numpy())
         val_frame = val_frame.copy()
         val_frame["score"] = val_frame["score_raw"]
-        m_test = _compute_metrics(test_frame, cfg, t_min, t_max)
+        m_test = frame_metrics(test_frame, cfg, t_min, t_max)
         entry = dict(m_test)
         if method.startswith("engine__"):
             y = test_frame["y"].to_numpy()
@@ -194,7 +225,7 @@ def build_report(run_dir: str | Path, config_path: str | Path | None = None) -> 
             }
         if cfg.get("include_val_section", True) and len(val_frame):
             # val is NOT evidence: point metrics only, no bootstrap CIs there
-            entry["val"] = _compute_metrics(val_frame, cfg, val_frame["start"].min(),
+            entry["val"] = frame_metrics(val_frame, cfg, val_frame["start"].min(),
                                             val_frame["end"].max(), do_bootstrap=False)
         all_metrics[method] = entry
 
@@ -252,8 +283,42 @@ def build_report(run_dir: str | Path, config_path: str | Path | None = None) -> 
     # failures first (engine frozen if present, else first engine mode)
     engine_modes = [m for m in methods if m.startswith("engine__")]
     fail_method = "engine__frozen" if "engine__frozen" in engine_modes else (engine_modes[0] if engine_modes else methods[0])
-    ff = _method_frame(res, fail_method, split, positive)
-    vf = _method_frame(res, fail_method, "val", positive)
+
+    # ablation: engine vs simple_knn_trust side by side, plus a paired bootstrap CI
+    # on the AUROC difference (events resampled jointly, so the CI is paired)
+    ablation = None
+    skt = "baseline__simple_knn_trust"
+    if engine_modes and skt in methods:
+        engine_type = None
+        manifest_path = run_dir / "manifest.json"
+        if manifest_path.is_file():
+            engine_type = (json.loads(manifest_path.read_text(encoding="utf-8")).get("engine") or {}).get("type")
+        ref_engine = "engine__frozen" if "engine__frozen" in engine_modes else engine_modes[0]
+        ef = method_frame(res, ref_engine, split, positive).copy()
+        ef["score"] = rank_normalize_on_val(method_frame(res, ref_engine, "val", positive)["score_raw"].to_numpy(),
+                                             ef["score_raw"].to_numpy())
+        sf = method_frame(res, skt, split, positive).copy()
+        sf["score"] = rank_normalize_on_val(method_frame(res, skt, "val", positive)["score_raw"].to_numpy(),
+                                            sf["score_raw"].to_numpy())
+        both = ef[["window_id", "y", "event_id", "score"]].merge(
+            sf[["window_id", "event_id", "score"]], on=["window_id", "event_id"],
+            suffixes=("_e", "_s"))
+
+        def fn_delta(s):
+            a = auroc(s["y"].to_numpy(), s["score_e"].to_numpy())
+            b = auroc(s["y"].to_numpy(), s["score_s"].to_numpy())
+            return None if a is None or b is None else a - b
+
+        ablation = {
+            "engine_type": engine_type,
+            "engine_method": ref_engine,
+            "baseline": skt,
+            "delta_auroc": bootstrap_over_events(both, fn_delta, int(cfg["bootstrap_n"]),
+                                                 int(cfg["seed"]), float(cfg["ci"])),
+            "n_events": n_events,
+        }
+    ff = method_frame(res, fail_method, split, positive)
+    vf = method_frame(res, fail_method, "val", positive)
     ff = ff.copy()
     ff["score"] = rank_normalize_on_val(vf["score_raw"].to_numpy(), ff["score_raw"].to_numpy())
     failures = ff[(ff["flag"] == False) & (ff["y"] == 1)].sort_values("score").head(int(cfg["failures_top_k"]))
@@ -336,6 +401,26 @@ def build_report(run_dir: str | Path, config_path: str | Path | None = None) -> 
             c = all_metrics[mname]["components"]
             lines.append(f"| {mname} | {_fmt(c['closeness_auroc'])} | {_fmt(c['one_minus_agreement_auroc'])} "
                          f"| {_fmt(c['combined_ranknorm_auroc'])} |")
+        lines.append("")
+    if ablation:
+        lines.append(f"## Ablation: engine vs simple_knn_trust ({split}, event-bootstrap CIs)")
+        lines.append("")
+        if ablation["engine_type"] == "mock":
+            lines.append("**MOCK ENGINE \u2014 the numbers in this section are NOT evidence about a real GTE.**")
+            lines.append("")
+        lines.append("| method | AUROC (CI) | AUPRC (CI) | events detected (CI) | false-trust @ "
+                     + "/".join(f"{b:.0%}" for b in budgets) + " |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for mname in (ablation["engine_method"], ablation["baseline"]):
+            m = all_metrics[mname]
+            ftr = [m["false_trust_at_budget"][b]["false_trust_rate"] for b in budgets]
+            lines.append(f"| {mname} | {_fmt(m['auroc'])} ({_ci_str(m['bootstrap']['auroc'])}) "
+                         f"| {_fmt(m['auprc'])} ({_ci_str(m['bootstrap']['auprc'])}) "
+                         f"| {_fmt(m['events']['fraction_detected'], 3)} ({_ci_str(m['bootstrap']['event_fraction_detected'])}) "
+                         f"| {'/'.join(_fmt(v, 3) for v in ftr)} |")
+        lines.append("")
+        lines.append(f"\u0394AUROC (engine \u2212 simple_knn_trust), paired bootstrap over {ablation['n_events']} "
+                     f"events: {_ci_str(ablation['delta_auroc'])}")
         lines.append("")
     lines.append("Figures: `metrics_overview.png` (AUROC/AUPRC + CI), `risk_coverage_<method>.png` per method, "
                  "`discrimination.png`, `failures_first.png`"
