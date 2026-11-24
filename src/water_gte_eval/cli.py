@@ -15,7 +15,18 @@ from pathlib import Path
 import yaml
 
 from .audit import verify_run_receipts
-from .baseline_eval import run_baseline_eval
+from .baseline_eval import BaselineEvalConfigError, run_baseline_eval
+from .config import ConfigError
+from .data.loader import DataError
+from .engine_run import RunConfigError
+from .ingest.config import IngestConfigError
+from .ingest.detect import DetectError
+from .inject_eval import InjectDemoConfigError
+from .prepare import PrepareConfigError
+from .report import ReportConfigError
+from .robustness import RobustnessConfigError
+from .sweep_eval import SweepConfigError
+from gte_eval.engine_adapter.base import EngineError
 from .devdata import generate_example_data, generate_example_processed, generate_example_raw
 from .engine_run import run_engine_eval
 from .ingest import run_ingest
@@ -122,6 +133,18 @@ def main(argv: list[str] | None = None) -> int:
     m3.add_argument("--out", default="examples/processed_demo", help="output directory")
     args = parser.parse_args(argv)
 
+    try:
+        return _dispatch(args)
+    except (ConfigError, DataError, DetectError, IngestConfigError, PrepareConfigError,
+            BaselineEvalConfigError, RunConfigError, ReportConfigError, SweepConfigError,
+            RobustnessConfigError, InjectDemoConfigError, EngineError) as exc:
+        # expected user-action errors (missing files/columns, bad config, engine
+        # unreachable): print the actionable message, not a traceback
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+def _dispatch(args) -> int:
     if args.command == "run":
         out_dir = run_experiment(args.config)
         _print_run_summary(out_dir)
